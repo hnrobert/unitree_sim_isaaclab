@@ -3,5 +3,6 @@
 """Unitree G1-D (wheeled base + lift + G1 upper body) task module."""
 
 from . import pick_place_cylinder_g1d_dex1
+from . import pick_place_cylinder_g1d_dex1_unibot
 
-__all__ = ["pick_place_cylinder_g1d_dex1"]
+__all__ = ["pick_place_cylinder_g1d_dex1", "pick_place_cylinder_g1d_dex1_unibot"]
