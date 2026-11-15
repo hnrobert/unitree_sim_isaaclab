@@ -2,34 +2,47 @@
 # License: Apache License, Version 2.0
 """G1-D + Dex1 pick-place in the UNIBOT demo's warehouse hall.
 
-Everything (actions / observations / events / terminations / DDS)
-is inherited from the reference cylinder task; only the SCENE is
-swapped for the unibot warehouse (tasks/common_scene/
-unibot_warehouse_scene.py): the robot works the corridor-side slot
-of the first divider table (x -8.5, +y row).
+Everything (actions / observations / events / DDS) is inherited from
+the reference cylinder task; only the SCENE is swapped for the
+unibot warehouse (tasks/common_scene/unibot_warehouse_scene.py) and
+the TASK OBJECT comes from the challenge layout config
+(unibot_task_layout.yaml: `pick:` selects a table + item - by
+default the T01 mug). The success bound is RELATIVE to the object's
+spawn pose (the reference one is absolute-scene and reset-loops
+outside its 6-table layout).
 """
 
-import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass
 
-from tasks.common_scene.unibot_warehouse_scene import UnibotWarehouseSceneCfg
+from tasks.common_scene.unibot_warehouse_scene import PICK_OBJECT, UnibotWarehouseSceneCfg
 from tasks.g1d_tasks.pick_place_cylinder_g1d_dex1.pickplace_cylinder_g1d_dex1_joint_env_cfg import (
     PickPlaceG1DDEX1JointEnvCfg)
 
+from . import mdp as unibot_mdp
+
 # robot parks at the slot standoff (SLOT_STANDOFF 0.55 south of the
-# slot), facing +y like the reference task; the cylinder stands on
-# the table's corridor-facing slot (TABLE_TOP 0.78 + half height)
+# slot), facing +y like the reference task
 ROBOT_POS = (-8.5, 0.35, 0.1114)
-OBJECT_POS = (-8.5, 0.9, 0.955)
 
 _ROBOT_ENTITIES = (
     "robot", "front_camera", "front_right_camera", "left_wrist_camera", "right_wrist_camera")
 
 
 @configclass
+class UnibotTerminationsCfg:
+    # object must stay near its tabletop spawn (see mdp.py: the
+    # reference reset_object_estimate is ABSOLUTE-scene and would
+    # reset-loop at our x -8.5 tables)
+    success = DoneTerm(func=unibot_mdp.object_stays_near_default)
+
+
+@configclass
 class PickPlaceG1DDex1UnibotEnvCfg(PickPlaceG1DDEX1JointEnvCfg):
-    """The reference G1-D Dex1 cylinder task inside our warehouse."""
+    """The reference G1-D Dex1 task inside our warehouse."""
+
+    terminations = UnibotTerminationsCfg()
 
     def __post_init__(self):
         super().__post_init__()
@@ -40,24 +53,13 @@ class PickPlaceG1DDex1UnibotEnvCfg(PickPlaceG1DDEX1JointEnvCfg):
             setattr(wh, name, getattr(old, name))
         init = wh.robot.init_state
         wh.robot = wh.robot.replace(init_state=init.replace(pos=ROBOT_POS))
+        # the env "object" = the challenge layout's pick item (the T01
+        # mug by default). The layout loader EXCLUDED it from the
+        # scene fields, so this is the single instance of it.
         wh.object = RigidObjectCfg(
             prim_path="/World/envs/env_.*/Object",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=list(OBJECT_POS), rot=[0, 0, 0, 1]),
-            spawn=sim_utils.CylinderCfg(
-                radius=0.018,
-                height=0.35,
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-                mass_props=sim_utils.MassPropertiesCfg(mass=0.4),
-                collision_props=sim_utils.CollisionPropertiesCfg(),
-                visual_material=sim_utils.PreviewSurfaceCfg(
-                    diffuse_color=(0.15, 0.15, 0.15), metallic=1.0),
-                physics_material=sim_utils.RigidBodyMaterialCfg(
-                    friction_combine_mode="max",
-                    restitution_combine_mode="min",
-                    static_friction=1.5,
-                    dynamic_friction=1.5,
-                    restitution=0.0,
-                ),
-            ),
+            init_state=RigidObjectCfg.InitialStateCfg(
+                pos=list(PICK_OBJECT["pos"]), rot=list(PICK_OBJECT["rot"])),
+            spawn=PICK_OBJECT["spawn"],
         )
         self.scene = wh

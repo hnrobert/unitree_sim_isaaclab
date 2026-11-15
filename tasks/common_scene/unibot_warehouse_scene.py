@@ -75,7 +75,7 @@ class _PropFactory:
         return c
 
 
-def build_tables():
+def build_tables(table_color=TABLE_COLOR):
     """12 work tables + the dressing tables: top slab + four legs each."""
     cfgs = []
     tx_len, ty_len, t_thick = TABLE_SIZE
@@ -90,7 +90,7 @@ def build_tables():
                     size=(tx_len, ty_len, t_thick),
                     collision_props=sim_utils.CollisionPropertiesCfg(),
                     visual_material=sim_utils.PreviewSurfaceCfg(
-                        diffuse_color=TABLE_COLOR, roughness=0.55, metallic=0.05),
+                        diffuse_color=table_color, roughness=0.55, metallic=0.05),
                 ),
                 init_state=AssetBaseCfg.InitialStateCfg(pos=(cx, cy, TABLE_TOP - t_thick / 2)),
             )
@@ -151,31 +151,11 @@ def build_warehouse_props():
                 props.append(p.cfg(gn, (gx, y_r, 0.38)))
             for gx, gn in ((x_c - 1.0, g1), (x_c, g0), (x_c + 1.0, g1)):
                 props.append(p.cfg(gn, (gx, y_r, 1.48)))
-    # static boxes on the OUTER (far) half of every work table
-    _dead_goods = ("SM_CardBoxB_01", "SM_CardBoxA_02", "SM_CardBoxC_01")
-    for ti, (tx, ty) in enumerate(TABLE_POS):
-        outward = 1.0 if ty >= 0 else -1.0
-        for k, dx in enumerate((-0.22, 0.22)):
-            props.append(p.cfg(
-                _dead_goods[(ti + k) % len(_dead_goods)],
-                (tx + dx, ty + outward * 0.55, TABLE_TOP)))
     # traffic furniture beside the table rows + aisle sign
     props.append(p.cfg("S_TrafficCone", (-2.5, 2.8, 0.0)))
     props.append(p.cfg("S_TrafficCone", (-6.8, -2.8, 0.0)))
     # S_AisleSign origin is CENTERED (local z -0.39..0.39) - lift it
     props.append(p.cfg("S_AisleSign", (-4.5, 3.2, 0.39), rot_z=180.0))
-    # goods on the east dressing tables, 2x2 grid each
-    _grid_goods = (
-        ("SM_CardBoxA_01", "SM_CardBoxB_01"),
-        ("SM_CratePlastic_A_01", "SM_CardBoxC_01"),
-        ("SM_CardBoxD_01", "SM_CardBoxA_02"),
-        ("SM_CardBoxB_01", "SM_CratePlastic_A_01"),
-    )
-    for ti, (cx, cy) in enumerate(DRESSING_TABLES):
-        ga, gb = _grid_goods[ti % len(_grid_goods)]
-        for gx, gn in ((cx - 0.28, ga), (cx + 0.28, gb)):
-            props.append(p.cfg(gn, (gx, cy - 0.32, TABLE_TOP)))
-            props.append(p.cfg(gn, (gx, cy + 0.32, TABLE_TOP)))
     # palletized stacks in both far corners
     for px, py in ((20.0, 4.0), (-21.5, 5.5), (-21.6, -6.2), (20.4, -4.5)):
         props.append(p.cfg("SM_PaletteA_02", (px, py, 0.0)))
@@ -200,10 +180,24 @@ class UnibotWarehouseSceneCfg(InteractiveSceneCfg):
         focal_length=16.5)
 
 
+# ---- challenge-task tabletop dressing (unibot_task_layout.yaml) --------
+# table_i -> world (x, y); work tables 00-11, dressing tables 12-15
+TABLE_WORLD = {f"table_{_i:02d}": _pos for _i, _pos in enumerate(TABLE_POS)}
+TABLE_WORLD.update({f"table_{len(TABLE_POS) + _i:02d}": _pos
+                    for _i, _pos in enumerate(DRESSING_TABLES)})
+
+from tasks.common_scene.unibot_challenge_items import build_table_items  # noqa: E402
+
+_TASK_ITEM_CFGS, TABLE_COLOR_CFG, PICK_OBJECT = build_table_items(TABLE_WORLD)
+
+
 # tables and warehouse dressing attach as numbered fields
 # (configclass turns every class attribute into an entity)
-for _i, _cfg in enumerate(build_tables()):
+for _i, _cfg in enumerate(build_tables(tuple(TABLE_COLOR_CFG))):
     setattr(UnibotWarehouseSceneCfg, f"table_{_i:03d}", _cfg)
 
 for _i, _cfg in enumerate(build_warehouse_props()):
     setattr(UnibotWarehouseSceneCfg, f"wh_prop_{_i:04d}", _cfg)
+
+for _i, _cfg in enumerate(_TASK_ITEM_CFGS):
+    setattr(UnibotWarehouseSceneCfg, f"task_item_{_i:03d}", _cfg)

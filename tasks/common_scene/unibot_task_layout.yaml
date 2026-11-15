@@ -1,0 +1,142 @@
+# UniBot-V1 challenge tabletop layouts for the unibot warehouse scene
+# (unitree_sim_isaaclab task Isaac-PickPlace-Cylinder-G1D-Dex1-Unibot-Joint).
+#
+# 坐标: 每桌局部系,x ±0.45(短边),y ±0.9(长边);y+ 朝外(背离走廊/机器人一侧是 y-)。
+# z 自动取桌面(TABLE_TOP 0.78)+ 物品半高 + 间隙,无需手填。
+# 微调: 直接增删改 items 条目(type / at / color / up / yaw),./run.sh stop && ./run.sh 生效。
+#   type  见 unibot_challenge_items.py 的注册表(杯/果/书/电池/试管/架子/USD道具…)
+#   at    [x, y] 桌面局部位置(米)
+#   color 可选,覆盖默认颜色(仅生成形状类有效)
+#   up    可选,额外抬高(米)——叠放时给下层物品让位
+#   yaw   可选,绕 z 旋转(度,仅 USD 道具/组合件)
+#
+# table_00..11 = 12 张工作桌(偶数 = 南排 y−1.7,奇数 = 北排 y+1.7,机器人服务 table_01)
+# table_12..15 = 东侧 4 张整理桌(仅布置,无抓取任务)
+
+table_color: [0.88, 0.87, 0.84]
+
+# env 的抓取对象: 该桌 items 列表的第几项(从 0 起)
+pick: { table: table_01, item: 1 }
+
+tables:
+  table_00:
+    task: T04 水果分类
+    items:
+      - { type: tray, at: [0.0, 0.05], color: [0.25, 0.7, 0.35] }
+      - { type: apple, at: [-0.09, 0.06] }
+      - { type: orange, at: [0.08, 0.03] }
+      - { type: plate, at: [-0.19, 0.38], color: [0.92, 0.55, 0.65] }
+      - { type: plate, at: [0.0, 0.38], color: [0.55, 0.85, 0.55] }
+      - { type: plate, at: [0.19, 0.38], color: [0.95, 0.85, 0.35] }
+  table_01:
+    task: T01 挂杯子
+    items:
+      - { type: cup_rack, at: [0.0, 0.22] }
+      - { type: mug_g, at: [0.07, -0.28] }
+  table_02:
+    task: T02 水果收集
+    items:
+      - { type: tray, at: [0.02, 0.32], color: [0.72, 0.55, 0.32] }
+      - { type: apple, at: [-0.11, -0.12] }
+      - { type: orange, at: [0.04, -0.2] }
+      - { type: banana_g, at: [0.16, -0.04], yaw: -20 }
+  table_03:
+    task: T20 纸杯堆叠
+    items:
+      - { type: cup, at: [-0.11, -0.08], color: [0.82, 0.66, 0.45] }
+      - { type: cup, at: [0.09, -0.17], color: [0.82, 0.66, 0.45] }
+      - { type: cup, at: [0.02, 0.07], color: [0.82, 0.66, 0.45] }
+  table_04:
+    task: T08 整理书架
+    items:
+      - { type: bookstand, at: [0.0, 0.38] }
+      - { type: book, at: [-0.04, -0.12], color: [0.2, 0.75, 0.7] }
+      - { type: book, at: [-0.04, -0.12], color: [0.95, 0.6, 0.75], up: 0.042 }
+  table_05:
+    task: T06 颜色排列
+    items:
+      - { type: block, at: [-0.16, -0.15], color: [0.9, 0.2, 0.15] }
+      - { type: block, at: [-0.08, -0.15], color: [0.95, 0.8, 0.2] }
+      - { type: block, at: [0.0, -0.15], color: [0.2, 0.75, 0.3] }
+      - { type: block, at: [0.08, -0.15], color: [0.2, 0.5, 0.9] }
+      - { type: block, at: [0.16, -0.15], color: [0.8, 0.3, 0.85] }
+      - { type: tray, at: [0.0, 0.3], color: [0.85, 0.85, 0.82] }
+  table_06:
+    task: T11 挑出电池
+    items:
+      - { type: tray, at: [-0.02, 0.08], color: [0.2, 0.4, 0.85] }
+      - { type: block, at: [-0.1, 0.08], color: [0.9, 0.2, 0.15] }
+      - { type: block, at: [-0.03, 0.12], color: [0.9, 0.2, 0.15] }
+      - { type: block, at: [0.05, 0.05], color: [0.9, 0.2, 0.15] }
+      - { type: block, at: [-0.06, 0.02], color: [0.9, 0.2, 0.15] }
+      - { type: battery, at: [0.1, 0.13] }
+      - { type: battery, at: [0.14, 0.07] }
+      - { type: battery, at: [0.06, 0.16] }
+      - { type: box, at: [0.18, -0.22], color: [0.3, 0.7, 0.4] }
+  table_07:
+    task: T13 整理试管
+    items:
+      - { type: tube_rack, at: [0.0, 0.28] }
+      - { type: tube, at: [-0.06, -0.1], color: [0.9, 0.75, 0.2] }
+      - { type: tube, at: [0.08, -0.16], color: [0.85, 0.3, 0.2] }
+      - { type: tube, at: [0.12, -0.05], color: [0.95, 0.6, 0.15] }
+  table_08:
+    task: T16 叠毛巾
+    items:
+      - { type: towel, at: [-0.02, -0.1] }
+      - { type: towel, at: [-0.02, -0.1], up: 0.028 }
+      - { type: towel, at: [0.14, 0.05], up: 0.056 }
+      - { type: towel, at: [0.14, 0.28] }
+  table_09:
+    task: T17 整理文具
+    items:
+      - { type: book, at: [-0.05, 0.3], color: [0.3, 0.45, 0.85] }
+      - { type: pencil, at: [0.05, -0.05], yaw: 30 }
+      - { type: pencil, at: [0.1, -0.12], yaw: -10 }
+      - { type: pencil, at: [-0.02, -0.16], yaw: 60 }
+      - { type: stapler_g, at: [0.12, 0.18], yaw: -25 }
+      - { type: cup, at: [-0.16, 0.12], color: [0.35, 0.45, 0.9] }
+  table_10:
+    task: T21 餐盘排列
+    items:
+      - { type: plate, at: [-0.19, 0.1], color: [0.92, 0.92, 0.9] }
+      - { type: plate, at: [0.0, 0.1], color: [0.92, 0.92, 0.9] }
+      - { type: plate, at: [0.19, 0.1], color: [0.92, 0.92, 0.9] }
+      - { type: cup, at: [-0.19, 0.1], color: [0.85, 0.25, 0.2], up: 0.014 }
+      - { type: cup, at: [0.0, 0.1], color: [0.2, 0.5, 0.85], up: 0.014 }
+  table_11:
+    task: T25 整理纸杯
+    items:
+      - { type: cup, at: [-0.16, 0.0], color: [0.95, 0.95, 0.92] }
+      - { type: cup, at: [-0.08, 0.0], color: [0.95, 0.95, 0.92] }
+      - { type: cup, at: [0.0, 0.0], color: [0.95, 0.95, 0.92] }
+      - { type: cup, at: [0.08, 0.0], color: [0.95, 0.95, 0.92] }
+      - { type: cup, at: [0.16, 0.0], color: [0.82, 0.66, 0.45] }
+  # 东侧整理桌: 布置风格的工作台面
+  table_12:
+    task: 工具角
+    items:
+      - { type: box_g, at: [0.0, 0.15], yaw: 10 }
+      - { type: book, at: [-0.2, -0.15], color: [0.9, 0.75, 0.2] }
+      - { type: stapler_g, at: [0.18, -0.1], yaw: 40 }
+  table_13:
+    task: 水果角
+    items:
+      - { type: box_g, at: [0.0, 0.2], color: [0.55, 0.42, 0.3] }
+      - { type: banana_g, at: [-0.14, -0.12], yaw: 15 }
+      - { type: banana_g, at: [0.1, -0.18], yaw: -30 }
+      - { type: apple, at: [0.16, 0.05] }
+  table_14:
+    task: 布草角
+    items:
+      - { type: towel, at: [-0.08, 0.05] }
+      - { type: towel, at: [-0.08, 0.05], up: 0.028 }
+      - { type: plate, at: [0.15, 0.15], color: [0.92, 0.92, 0.9] }
+      - { type: plate, at: [0.15, -0.1], color: [0.6, 0.8, 0.95] }
+  table_15:
+    task: 图书角
+    items:
+      - { type: bookstand, at: [0.0, 0.3] }
+      - { type: book, at: [0.0, 0.06], color: [0.85, 0.3, 0.25] }
+      - { type: book, at: [0.0, 0.06], color: [0.25, 0.5, 0.85], up: 0.042 }
+      - { type: mug_g, at: [0.18, -0.2] }

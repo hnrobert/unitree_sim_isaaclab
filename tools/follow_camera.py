@@ -35,6 +35,8 @@ class FollowCamera:
         cam.CreateClippingRangeAttr(Gf.Vec2f(0.05, 1.0e5))
         self._op = UsdGeom.Xformable(cam.GetPrim()).MakeMatrixXform()
         self.path = prim_path
+        self._written = None  # matrix WE last wrote (user edits differ)
+        self._paused = False
         self.update(force=True)
 
     def _root_pose(self):
@@ -47,6 +49,19 @@ class FollowCamera:
 
     def update(self, force: bool = False) -> None:
         from pxr import Gf
+
+        # The viewport camera fight: orbiting/panning in the viewport
+        # edits THIS camera's transform, and the next update() would
+        # overwrite it right back (the "camera snaps back to center"
+        # behavior). Detect the external edit - current matrix no
+        # longer equals the one we wrote - and stop following from
+        # then on (until the simulation restarts).
+        current = self._op.Get()
+        if not self._paused and self._written is not None and current != self._written:
+            self._paused = True
+            print("[camera] follow view paused - viewport camera moved by the user")
+        if self._paused:
+            return
 
         px, py, yaw = self._root_pose()
         if self._yaw is None or force:
@@ -62,3 +77,4 @@ class FollowCamera:
         target = Gf.Vec3d(px + self._look_ahead * c, py + self._look_ahead * s, self._look_height)
         view = Gf.Matrix4d().SetLookAt(eye, target, Gf.Vec3d(0, 0, 1))  # world -> camera (USD / OpenGL camera)
         self._op.Set(view.GetInverse())
+        self._written = self._op.Get()
