@@ -1,7 +1,7 @@
 # UniBot-V1 challenge tabletop layouts for the unibot warehouse scene
 # (unitree_sim_isaaclab task Isaac-PickPlace-Cylinder-G1D-Dex1-Unibot-Joint).
 #
-# 坐标: 每桌局部系,x ±0.45(短边),y ±0.9(长边);y+ 朝外(背离走廊/机器人一侧是 y-)。
+# 坐标: 每桌局部系(桌面已转 90°,长边沿 x),x ±0.9(长边),y ±0.45(深度);y+ 朝外(背离走廊/机器人一侧是 y-)。
 # z 自动取桌面(TABLE_TOP 0.78)+ 物品半高 + 间隙,无需手填。
 # 微调: 直接增删改 items 条目(type / at / color / up / yaw),./run.sh stop && ./run.sh 生效。
 #   type  见 unibot_challenge_items.py 的注册表(杯/果/书/电池/试管/架子/USD道具…)

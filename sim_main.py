@@ -463,6 +463,14 @@ def main(env_cfg):
     env.sim.reset()
     env.reset()
 
+    # unibot warehouse: real materials on the generated challenge
+    # items (no-ops on the stock tasks - empty manifest)
+    try:
+        from tasks.common_scene.unibot_dress_materials import dress_items
+        dress_items()
+    except Exception as e:
+        print(f"[unibot] item material dressing skipped: {e}")
+
     # create simplified control configuration
     try:
         control_config = ControlConfig(

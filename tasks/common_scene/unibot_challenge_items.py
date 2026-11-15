@@ -215,9 +215,11 @@ def _color(entry):
 
 
 def make_item_cfgs(entry, table_pos):
-    """One YAML item entry -> list of (cfg with prim_path filled later).
+    """One YAML item entry -> (cfgs, manifests, pick_spec).
 
-    Returns (cfgs, pick_spec) - pick_spec is non-None for dynamic
+    cfgs carry a PLACEHOLDER prim_path (filled by build_table_items);
+    manifests are the per-prim records for the material dressing
+    pass (type + tint color); pick_spec is non-None for dynamic
     single-part items (usable as the env's task object).
     """
     typ = entry["type"]
@@ -230,14 +232,15 @@ def make_item_cfgs(entry, table_pos):
         yaw = float(entry.get("yaw", 0.0))
         q = _qz(yaw)
         cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
-        cfgs = []
+        cfgs, manifests = [], []
         for (ox, oy, oz), size, color in COMPOUNDS[typ](wx, wy, yaw, color):
             px = wx + ox * cy - oy * sy
             py = wy + ox * sy + oy * cy
             cfgs.append(_stat(
                 sim_utils.CuboidCfg(size=size, collision_props=_col(), visual_material=_vis(color, 0.05, 0.7)),
                 (px, py, TABLE_TOP + oz + GAP), q))
-        return cfgs, None
+            manifests.append({"type": typ, "color": color})
+        return cfgs, manifests, None
 
     kind, half_z, factory = REGISTRY[typ]
     z = TABLE_TOP + GAP + (half_z if half_z > 0 else 0.0) + up
@@ -246,12 +249,17 @@ def make_item_cfgs(entry, table_pos):
         else _stat(factory(color), (wx, wy, z), rot)
     pick = {"type": typ, "pos": (wx, wy, z), "rot": rot,
             "spawn": factory(color)} if kind == "dyn" else None
-    return [cfg], pick
+    return [cfg], [{"type": typ, "color": color}], pick
 
 
 def load_layout():
     with open(LAYOUT_YAML, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+# per-prim records for the material dressing pass (unibot_dress_
+# materials.dress_items): {"prim": leaf name, "type", "color"}
+DRESS_MANIFEST = []
 
 
 def build_table_items(table_world_pos):
@@ -269,7 +277,7 @@ def build_table_items(table_world_pos):
         if tname not in table_world_pos:
             raise KeyError(f"{tname} in unibot_task_layout.yaml is not a scene table")
         for i, entry in enumerate(tdef.get("items", [])):
-            item_cfgs, item_pick = make_item_cfgs(entry, table_world_pos[tname])
+            item_cfgs, manifests, item_pick = make_item_cfgs(entry, table_world_pos[tname])
             is_pick = item_pick is not None and tname == pick_sel.get("table") and i == pick_sel.get("item")
             if is_pick:
                 # the env's "object" entity IS this item - do NOT also
@@ -277,8 +285,13 @@ def build_table_items(table_world_pos):
                 # two overlapping bodies)
                 pick = item_pick
                 continue
-            for c in item_cfgs:
-                c.prim_path = f"{{ENV_REGEX_NS}}/task_item_{n:03d}"
+            for c, m in zip(item_cfgs, manifests):
+                leaf = f"task_item_{n:03d}"
+                c.prim_path = f"{{ENV_REGEX_NS}}/{leaf}"
                 cfgs.append(c)
+                DRESS_MANIFEST.append({"prim": leaf, "type": m["type"], "color": m["color"]})
                 n += 1
+    if pick is not None:
+        # the env object prim (env_.*/Object) needs dressing too
+        DRESS_MANIFEST.append({"prim": "Object", "type": pick["type"], "color": (0.45, 0.8, 0.8)})
     return cfgs, layout.get("table_color", (0.88, 0.87, 0.84)), pick

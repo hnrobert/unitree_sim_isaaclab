@@ -35,7 +35,10 @@ DIVIDER_X = (-8.5, -11.0, -13.75, -15.25, -18.0, -19.5)
 ROW_DY = 1.7
 TABLE_POS = tuple((float(x), float(dy)) for x in DIVIDER_X for dy in (-ROW_DY, ROW_DY))
 TABLE_TOP = 0.78
-TABLE_SIZE = (0.9, 1.8, 0.06)  # long axis Y
+TABLE_SIZE = (1.8, 0.9, 0.06)  # long axis X - the corridor-facing
+# face is the full 1.8 m edge and the DEPTH toward the far side is
+# only 0.9 m, so far-edge items (racks/plates rows) stay within the
+# arm's reach from the corridor side (was 1.8 m deep - unreachable)
 TABLE_COLOR = (0.56, 0.42, 0.27)
 LEG_COLOR = (0.32, 0.32, 0.34)
 DRESSING_TABLES = ((6.0, 3.0), (10.0, 3.2), (6.0, -3.0), (12.0, -3.4))
