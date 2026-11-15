@@ -42,8 +42,10 @@ def _subscribe(ctx, port):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--width", type=int, default=640, help="window width")
+    ap.add_argument("--width", type=int, default=640, help="per-view width")
     ap.add_argument("--scale", type=float, default=1.0, help="extra window scale")
+    ap.add_argument("--grid", action="store_true",
+                    help="single 2x2 grid window instead of four windows")
     args = ap.parse_args()
 
     ctx = zmq.Context()
@@ -55,10 +57,15 @@ def main() -> None:
 
     w = int(args.width * args.scale)
     h = int(w * 480 / 640)
-    for i, (title, _p, _half) in enumerate(WINDOWS):
-        cv2.namedWindow(title, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(title, w, h)
-        cv2.moveWindow(title, 40 + (i % 2) * (w + 40), 60 + (i // 2) * (h + 80))
+    if args.grid:
+        cv2.namedWindow("cameras 2x2", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("cameras 2x2", 2 * w, 2 * h)
+        cv2.moveWindow("cameras 2x2", 60, 60)
+    else:
+        for i, (title, _p, _half) in enumerate(WINDOWS):
+            cv2.namedWindow(title, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(title, w, h)
+            cv2.moveWindow(title, 40 + (i % 2) * (w + 40), 60 + (i // 2) * (h + 80))
 
     last_print = time.time()
     shown = 0
@@ -76,15 +83,33 @@ def main() -> None:
                 frames["head left"] = img[:, : img.shape[1] // 2]
                 frames["head right"] = img[:, img.shape[1] // 2:]
             else:
-                for t, p, h in WINDOWS:
-                    if p == port and h is None:
+                for t, p, hf in WINDOWS:
+                    if p == port and hf is None:
                         frames[t] = img
         shown = 0
-        for title, _p, _half in WINDOWS:
-            f = frames[title]
-            if f is not None:
-                cv2.imshow(title, f)
-                shown += 1
+        if args.grid:
+            tiles = []
+            for row in (("head left", "head right"), ("wrist left", "wrist right")):
+                cells = []
+                for title in row:
+                    f = frames[title]
+                    if f is None:
+                        f = np.zeros((h, w, 3), dtype=np.uint8)
+                    else:
+                        f = cv2.resize(f, (w, h))
+                    cv2.putText(f, title, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7, (255, 255, 255), 2, cv2.LINE_AA)
+                    cells.append(f)
+                    if frames[title] is not None:
+                        shown += 1
+                tiles.append(np.hstack(cells))
+            cv2.imshow("cameras 2x2", np.vstack(tiles))
+        else:
+            for title, _p, _half in WINDOWS:
+                f = frames[title]
+                if f is not None:
+                    cv2.imshow(title, f)
+                    shown += 1
         if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
             break
         now = time.time()
