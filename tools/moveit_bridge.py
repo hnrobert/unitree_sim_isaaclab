@@ -40,7 +40,19 @@ for _i, _n in enumerate(
         "right_shoulder_pitch right_shoulder_roll right_shoulder_yaw "
         "right_elbow right_wrist_roll right_wrist_pitch right_wrist_yaw".split()):
     ARM_MOTOR[_n + "_joint"] = 15 + _i
-GRIP_RANGE = (0.0, 1.0)  # cmd space (rt/dex1/<side>/cmd)
+# whole-body extras (README / g1d_state.py): waist yaw = motor 12,
+# waist pitch = 13; Dex1 grippers = lowcmd 31 (left) / 33 (right)
+# with motor q 0 closed .. 5.4 open. The lift (LZ_mt/LZ_it, 0..0.21)
+# has no lowcmd slot - it drives via rt/cmd_hispeed VELOCITY; the
+# bridge runs a tiny P-loop for its position targets.
+ARM_MOTOR["torso_Joint"] = 12
+ARM_MOTOR["Yaw_Joint"] = 13
+LIFT_JOINTS = {"LZ_mt_Joint", "LZ_it_Joint"}
+GRIP_MOTOR = {"right_dex1_finger_joint_1": 33, "right_dex1_finger_joint_2": 33,
+              "left_dex1_finger_joint_1": 31, "left_dex1_finger_joint_2": 31}
+FINGER_TRAVEL = 0.041  # m, prismatic joint range
+GRIP_MOTOR_OPEN = 5.4
+GRIP_RANGE = (0.0, 1.0)
 
 
 class Bridge:
@@ -51,6 +63,10 @@ class Bridge:
         self.pub.Init()
         self.grip_pub = ChannelPublisher("rt/dex1/right/cmd", MotorCmds_)
         self.grip_pub.Init()
+        self.lift_pub = ChannelPublisher("rt/cmd_hispeed", __import__(
+            "unitree_sdk2py.idl.geometry_msgs.msg.dds_", fromlist=["Point32_"]).Point32_)
+        self.lift_pub.Init()
+        self.lift_target = None  # total lift height target (m)
         self.lowstate = None
         self.odom = None
         ChannelSubscriber("rt/lowstate", LowState_).Init(self._on_lowstate, 1)
@@ -105,6 +121,15 @@ class Bridge:
             self.pub.Write(msg)
             time.sleep(0.02)  # 50 Hz
 
+    def _lift_velocity(self, height_m):
+        """rt/cmd_hispeed is a VELOCITY command (teleop sends speeds);
+        run a naive P-loop toward the requested lift height."""
+        from unitree_sdk2py.idl.geometry_msgs.msg.dds_ import Point32_
+        p = Point32_()
+        p.z = max(-0.05, min(0.05, 2.0 * (height_m - getattr(self, "_lift_now", 0.0))))
+        self._lift_now = height_m
+        self.lift_pub.Write(p)
+
     def gripper(self, open01):
         # q in real-motor units: 0 closed .. 5.4 open (README)
         q = 5.4 * float(min(max(open01, 0.0), 1.0))
@@ -123,6 +148,9 @@ class Bridge:
         t0 = time.time()
         total = (times[-1] if times else 0.0) / time_scale
         k = 0
+        # snapshot the lift start height from lowstate (motor q)
+        lift_start = self.q[12] * 0.0  # placeholder; lowstate lacks lift
+        finger_names = [n for n in names if n in GRIP_MOTOR]
         while True:
             t = (time.time() - t0) * time_scale
             while k + 1 < len(times) and times[k + 1] < t:
@@ -131,12 +159,24 @@ class Bridge:
                 break
             t0k, t1k = times[k], times[k + 1]
             a = 0.0 if t1k <= t0k else min(1.0, (t - t0k) / (t1k - t0k))
+            lift_sum = 0.0
             for j, name in enumerate(names):
-                slot = ARM_MOTOR.get(name)
-                if slot is not None:
-                    self.q[slot] = points[k][j] + a * (points[k + 1][j] - points[k][j])
+                v = points[k][j] + a * (points[k + 1][j] - points[k][j])
+                if name in GRIP_MOTOR:
+                    # finger prismatic m -> gripper motor q (0 closed..5.4 open)
+                    self.gripper(1.0 - min(1.0, max(0.0, v / FINGER_TRAVEL)))
+                elif name in LIFT_JOINTS:
+                    lift_sum += v
+                else:
+                    slot = ARM_MOTOR.get(name)
+                    if slot is not None:
+                        self.q[slot] = v
+            if lift_sum > 0.0:
+                self._lift_velocity(lift_sum)
             time.sleep(0.02)
         for j, name in enumerate(names):  # settle at the final point
+            if name in GRIP_MOTOR or name in LIFT_JOINTS:
+                continue
             slot = ARM_MOTOR.get(name)
             if slot is not None:
                 self.q[slot] = points[-1][j]
@@ -149,13 +189,32 @@ def world_to_base(wx, wy, wz, bx, by, byaw):
     return (c * dx + s * dy, -s * dx + c * dy, wz)
 
 
-def plan(side, goal_base_rpy, seed=None):
-    import json
+def local_ik(side, goal_torso, seed_q):
+    """DLS inverse kinematics LOCALLY (tools/arm_ik.py, numpy) - the
+    same solver our demo uses; no ROS round-trip, no service flakiness.
+    goal_torso: [x, y, z, roll, pitch, yaw] for the DEX1-BASE link
+    (= wrist + 0.0415 m along the forearm axis, so tcp_offset below)."""
+    from arm_ik import ArmKinematics
+    import numpy as np
+    kin = ArmKinematics(side, tcp_offset=(0.0415, 0.0, 0.0))
+    x, y, z, r, p, yw = goal_torso
+    cr, sr, cp, sp, cy, sy = (math.cos(r), math.sin(r), math.cos(p),
+                              math.sin(p), math.cos(yw), math.sin(yw))
+    R = np.array([[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+                  [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+                  [-sp, cp * sr, cp * cr]])
+    q, ep, er = kin.ik(np.array([x, y, z]), R, np.array(seed_q))
+    if ep > 0.005 or er > 0.15:
+        return {"ok": False, "error": f"no ik (perr {ep:.3f} rerr {er:.2f})"}
+    return {"ok": True, "names": kin.names, "points": [list(q)], "times": [0.0]}
+
+
+def plan(side, goal_base_rpy, seed=None, op="plan"):
     import zmq
     ctx = zmq.Context()
     sock = ctx.socket(zmq.REQ)
     sock.connect("tcp://127.0.0.1:12555")
-    sock.send_json({"op": "plan", "side": side, "goal": list(goal_base_rpy),
+    sock.send_json({"op": op, "side": side, "goal": list(goal_base_rpy),
                     "seed": seed or {}})
     rep = sock.recv_json()
     sock.close()
@@ -172,6 +231,10 @@ def main():
     ap.add_argument("--robot-base", nargs=3, type=float, default=(-8.5, 0.35, 0.0),
                     metavar=("X", "Y", "YAW"), help="robot world pose (radians yaw)")
     ap.add_argument("--gripper", type=float, help="0 closed .. 1 open (no planning)")
+    ap.add_argument("--ik", action="store_true",
+                    help="skip OMPL: solve IK for the goal and move there directly")
+    ap.add_argument("--ik-service", action="store_true",
+                    help="use the sidecar /compute_ik service instead of local DLS")
     args = ap.parse_args()
 
     bridge = Bridge()
@@ -194,9 +257,27 @@ def main():
     seed = {}
     for name, slot in ARM_MOTOR.items():
         seed[name] = bridge.q[slot]
-    rep = plan(args.side, (x, y, z, r, p, yw), seed)
+    if args.ik:
+        # LOCAL damped-least-squares IK (arm_ik.py) - deterministic,
+        # no ROS hop; falls back to the sidecar service with --ik-service
+        seed_q = [seed.get(n, 0.0) for n in
+                  (f"{args.side}_{j}_joint" for j in
+                   ("shoulder_pitch", "shoulder_roll", "shoulder_yaw",
+                    "elbow", "wrist_roll", "wrist_pitch", "wrist_yaw"))]
+        rep = local_ik(args.side, (x, y, z, r, p, yw), seed_q)
+        if not rep.get("ok") and args.ik_service:
+            rep = plan(args.side, (x, y, z, r, p, yw), seed, op="ik")
+    else:
+        rep = plan(args.side, (x, y, z, r, p, yw), seed)
     if not rep.get("ok"):
         raise SystemExit(f"planning failed: {rep.get('error')}")
+    if args.ik:
+        q = rep["points"][0]
+        print(f"ik ok: q = ['" + "', '".join('%.3f' % v for v in q) + "']")
+        # smooth 2 s move to the IK solution (seed -> solution)
+        seed_q = [seed.get(n, 0.0) for n in rep["names"]]
+        bridge.execute(rep["names"], [0.0, 2.0], [seed_q, q], time_scale=1.0)
+        return
     print(f"plan ok: {len(rep['points'])} waypoints, {rep['times'][-1]:.1f}s")
     bridge.execute(rep["names"], rep["times"], rep["points"])
 

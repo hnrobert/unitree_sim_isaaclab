@@ -9,6 +9,16 @@ ompl:
     planner_configs: [RRTConnectkConfigDefault]
   left_arm:
     planner_configs: [RRTConnectkConfigDefault]
+  waist:
+    planner_configs: [RRTConnectkConfigDefault]
+  right_gripper:
+    planner_configs: [RRTConnectkConfigDefault]
+  left_gripper:
+    planner_configs: [RRTConnectkConfigDefault]
+  right_whole:
+    planner_configs: [RRTConnectkConfigDefault]
+  left_whole:
+    planner_configs: [RRTConnectkConfigDefault]
   planner_configs:
     RRTConnectkConfigDefault:
       type: geometric::RRTConnect

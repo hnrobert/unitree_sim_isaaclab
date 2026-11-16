@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-jazzy-moveit-py \
       ros-jazzy-moveit-planners-ompl \
       ros-jazzy-moveit-msgs \
+      ros-jazzy-joint-state-publisher \
       ros-jazzy-ros2cli \
       python3-numpy python3-zmq python3-yaml \
     && rm -rf /var/lib/apt/lists/*

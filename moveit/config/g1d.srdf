@@ -32,6 +32,39 @@
   </group_state>
 
   <!-- adjacent + near-adjacent pairs; the torso clears both arms -->
+  <!-- WHOLE-BODY groups: every POSITION-servoed joint on the chain.
+       right/left_whole: lift (LZ_mt/LZ_it) + waist yaw/pitch + arm
+       (13 DOF redundant chain from the AGV base). Wheels are NOT on
+       the chain; the lift executes via rt/cmd_hispeed velocity (the
+       bridge converts position targets), waist via motors 12/13. -->
+  <group name="waist">
+    <joint name="torso_Joint"/>
+    <joint name="Yaw_Joint"/>
+  </group>
+  <group name="right_gripper">
+    <joint name="right_dex1_finger_joint_1"/>
+    <joint name="right_dex1_finger_joint_2"/>
+  </group>
+  <group name="left_gripper">
+    <joint name="left_dex1_finger_joint_1"/>
+    <joint name="left_dex1_finger_joint_2"/>
+  </group>
+  <group name="right_whole">
+    <chain base_link="AGV_link" tip_link="right_dex1_base_link"/>
+  </group>
+  <group name="left_whole">
+    <chain base_link="AGV_link" tip_link="left_dex1_base_link"/>
+  </group>
+  <group_state name="tucked" group="right_whole">
+    <joint name="LZ_mt_Joint" value="0.0"/>
+    <joint name="LZ_it_Joint" value="0.0"/>
+    <joint name="torso_Joint" value="0.0"/>
+    <joint name="Yaw_Joint" value="0.0"/>
+    <joint name="right_shoulder_pitch_joint" value="-0.6"/>
+    <joint name="right_elbow_joint" value="1.2"/>
+    <joint name="right_wrist_pitch_joint" value="-0.9"/>
+  </group_state>
+
   <disable_collisions link1="torso_link" link2="right_shoulder_pitch_link"/>
   <disable_collisions link1="torso_link" link2="right_shoulder_roll_link"/>
   <disable_collisions link1="torso_link" link2="right_shoulder_yaw_link"/>

@@ -42,6 +42,16 @@ def generate_launch_description():
         # rejected with "Expected 'value' to be one of ...".)
     }
 
+    # move_group's /compute_ik & /compute_fk need the TF tree, which
+    # robot_state_publisher only broadcasts WHEN /joint_states flows -
+    # without a publisher the IK/FK services fail with NO_IK_SOLUTION
+    jsp = Node(
+        package="joint_state_publisher",
+        executable="joint_state_publisher",
+        parameters=[{"robot_description": urdf, "rate": 30}],
+        output="screen",
+    )
+
     rsp = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -56,7 +66,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    return LaunchDescription([rsp, move_group])
+    return LaunchDescription([jsp, rsp, move_group])
 
 
 if __name__ == "__main__":
