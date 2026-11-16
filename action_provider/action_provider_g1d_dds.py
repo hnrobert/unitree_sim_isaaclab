@@ -169,12 +169,10 @@ class G1DDDSActionProvider(ActionProvider):
             self._targets[i] = self._lift_height / len(self._lift_ids)
 
     def _apply_base(self, cmd, now):
-        """Drive the base with the rt/cmd_vel_no_limit twist.
-
-        The root link velocity is set every control step: the commanded forward / yaw velocity, plus
-        corrections that keep the base at its hover height and upright. Physics integrates it, so the
-        base is stopped by obstacles (e.g. the table) instead of being pushed through them.
-        """
+        """Drive the base with the rt/cmd_vel_no_limit twist (stock
+        root-VELOCITY write). Contact lockups are prevented OUTSIDE
+        physics: the AGV links are collision-filtered against the
+        task tables (see sim_main unibot_filter_tables)."""
         v = w = 0.0
         if cmd and now - cmd.get("move_stamp", 0.0) < self.CMD_TIMEOUT:
             v, w = float(cmd.get("lin_x", 0.0)), float(cmd.get("ang_z", 0.0))
@@ -184,10 +182,9 @@ class G1DDDSActionProvider(ActionProvider):
         z = float(pose[2])
         x, y, qz, qw = (float(c) for c in pose[3:7])
         yaw = _yaw_of(pose[3:7])
-        # tilt error: rotation from the current orientation to upright with the same yaw (small angles)
         roll = math.atan2(2.0 * (qw * x + y * qz), 1.0 - 2.0 * (x * x + y * y))
         pitch = math.asin(max(-1.0, min(1.0, 2.0 * (qw * y - qz * x))))
-        k = 1.0 / (2.0 * self._dt)  # converge in ~2 control steps
+        k = 1.0 / (2.0 * self._dt)
         cy, sy = math.cos(yaw), math.sin(yaw)
         wx_b, wy_b = -k * roll, -k * pitch
         vel = torch.tensor(

@@ -471,6 +471,33 @@ def main(env_cfg):
     except Exception as e:
         print(f"[unibot] item material dressing skipped: {e}")
 
+    # unibot warehouse: COLLISION-FILTER the robot against every work
+    # table (tops + legs). The stock base drive writes root VELOCITY;
+    # a table contact interlocks it irreversibly (all channels dead).
+    # Filtering removes the lockup at the source; the tables remain
+    # solid for objects/grasping. No-ops when no Table prims exist.
+    try:
+        import omni.usd as _ou_f
+        from pxr import UsdPhysics as _UP_f, Sdf as _Sdf_f
+        _st_f = _ou_f.get_context().get_stage()
+        _tables_f, _robot_f = [], []
+        for _p_f in _st_f.Traverse():
+            _n_f = _p_f.GetName()
+            _path_f = str(_p_f.GetPath())
+            if (_n_f.startswith("Table") and _p_f.HasAPI(_UP_f.CollisionAPI)) or (
+                    _n_f.startswith("Table") and _path_f.count("/") <= 4):
+                _tables_f.append(_Sdf_f.Path(_path_f))
+            if _path_f.startswith("/World/envs/env_0/Robot") and _p_f.HasAPI(_UP_f.CollisionAPI):
+                _robot_f.append(_p_f)
+        _n_f = 0
+        for _rp_f in _robot_f:
+            _fp_f = _UP_f.FilteredPairsAPI.Apply(_rp_f)
+            _fp_f.CreateFilteredPairsRel().SetTargets(_tables_f)
+            _n_f += 1
+        print(f"[unibot] base-vs-table collision filter: {_n_f} robot links x {len(_tables_f)} table prims")
+    except Exception as e:
+        print(f"[unibot] table collision filter skipped: {e}")
+
     # create simplified control configuration
     try:
         control_config = ControlConfig(

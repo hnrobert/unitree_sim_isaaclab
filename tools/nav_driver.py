@@ -52,9 +52,12 @@ LANE_Y = 0.30
 HOME_X, HOME_Y, HOME_YAW = -8.5, 0.35, 0.0
 
 # control constants (from the demo's driver)
-V_CREEP = 0.15
-V_TRANSIT = 0.50  # the sim slews the base, so command high - actual ~0.1-0.2
-W_TURN = 0.6
+# Measured drive gains (stock velocity write + table collision
+# filter): commands attenuate LINEARLY - v ~5.4x, w ~10x - so
+# command scaled-up rates; the closed loops close the residue
+V_CREEP = 0.50
+V_TRANSIT = 1.50
+W_TURN = 3.0
 K_LAT = 0.8                  # lateral homing gain
 K_HEAD = 1.2                 # heading P gain while creeping
 POS_TOL = 0.05
@@ -131,15 +134,22 @@ class NavDriver:
         return wx, wy, wrap(yaw + HOME_YAW)
 
     # ---- demo control logic ---------------------------------------------
-    def spin_to(self, yaw, timeout=12.0, tol=YAW_TOL):
+    def spin_to(self, yaw, timeout=25.0, tol=YAW_TOL):
         t0 = time.time()
         while time.time() - t0 < timeout:
             _, _, cur = self.pose()
             err = wrap(yaw - cur)  # demo convention: err = desired - yaw
             if abs(err) < tol:
                 self.zero()
-                return True
-            self.send(0.0, max(0.08, min(W_TURN, 1.5 * abs(err))) * (1 if err > 0 else -1))
+                # odom lags the motion - settle and RE-CHECK once
+                time.sleep(0.4)
+                if abs(wrap(yaw - self.pose()[2])) < tol + 0.04:
+                    self.zero()
+                    return True
+            # two-rate approach: fast outside 0.6 rad, gentle inside
+            # (the odom lag overruns a fixed high rate by many degrees)
+            mag = W_TURN if abs(err) > 0.6 else max(0.25, 0.9 * abs(err))
+            self.send(0.0, mag * (1 if err > 0 else -1))
             time.sleep(0.05)
         self.zero()
         return False
@@ -267,9 +277,10 @@ def patrol(d, which="all", rounds=1):
     full = route + list(reversed(route)) if rounds >= 1 else route
     rep = PatrolReport()
     d.wait_odom()
-    # start from a CLEAN scene: a previously contact-locked base
-    # would fail every leg (the lock is irreversible without reset)
-    d.reset_pose()
+    # NOTE no scene reset here: with the kinematic pose-write base a
+    # mid-run reset races the pose writer and trips the sim's
+    # link-divergence guard (killed the sim twice). The base no
+    # longer contact-locks, so resets are not needed at all.
     print(f"patrol: {len(full)} station stops, route={which}", flush=True)
     for si, ti in enumerate(full):
         st = stations()[ti]
@@ -294,9 +305,7 @@ def patrol(d, which="all", rounds=1):
             print(f"  {tag} attempt {attempt} missed "
                   f"({cx:+.2f},{cy:+.2f},{math.degrees(cyaw):+.0f}) - back off", flush=True)
             if attempt == 2:
-                print(f"  {tag} contact-locked - resetting scene", flush=True)
-                d.reset_pose()
-                result = "RESET"
+                result = "FAIL"
                 break
             t1 = time.time()
             while time.time() - t1 < 1.5:
