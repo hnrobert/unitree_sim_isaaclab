@@ -125,3 +125,6 @@ assets
 
 ${data}
 *.etli
+# generated for the moveit sidecar (66MB meshes, patched urdf)
+moveit/config/meshes/
+moveit/config/g1d_moveit.urdf

@@ -1,0 +1,37 @@
+# moveit_py config (Jazzy) for the G1-D + Dex1 planning sidecar.
+# The robot description strings are injected by plan_pick.py (it
+# passes this file plus the urdf/srdf contents to MoveItPy).
+planning_scene_monitor_options:
+  name: "planning_scene_monitor"
+  robot_description: "robot_description"
+  joint_state_topic: "/joint_states"
+  attached_collision_object_topic: "/moveit_cpp/planning_scene_monitor"
+  publish_planning_scene_topic: "/moveit_cpp/publish_planning_scene"
+  monitored_planning_scene_topic: "/moveit_cpp/monitored_planning_scene"
+  # no live /joint_states publisher here - start states are set
+  # explicitly per request, so do not stall on the first state
+  wait_for_initial_state_timeout: 1.0
+
+planning_pipelines: ["ompl"]
+
+robot_description_kinematics:
+  right_arm:
+    kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+    kinematics_solver_search_resolution: 0.005
+    kinematics_solver_timeout: 0.05
+  left_arm:
+    kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+    kinematics_solver_search_resolution: 0.005
+    kinematics_solver_timeout: 0.05
+
+ompl_planning:
+  planning_plugins:
+    - ompl_interface/OMPLPlanner
+  right_arm:
+    planner_configs: [RRTConnectkConfigDefault]
+  left_arm:
+    planner_configs: [RRTConnectkConfigDefault]
+  planner_configs:
+    RRTConnectkConfigDefault:
+      type: geometric::RRTConnect
+      range: 0.0

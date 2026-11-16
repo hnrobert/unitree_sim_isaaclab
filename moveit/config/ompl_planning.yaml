@@ -1,0 +1,15 @@
+# Jazzy move_group structure: pipelines are NAMED subtrees listed
+# in planning_pipelines; each carries its own planning_plugins.
+planning_pipelines: ["ompl"]
+default_planning_pipeline: ompl
+ompl:
+  planning_plugins:
+    - ompl_interface/OMPLPlanner
+  right_arm:
+    planner_configs: [RRTConnectkConfigDefault]
+  left_arm:
+    planner_configs: [RRTConnectkConfigDefault]
+  planner_configs:
+    RRTConnectkConfigDefault:
+      type: geometric::RRTConnect
+      range: 0.0
