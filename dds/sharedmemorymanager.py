@@ -47,7 +47,10 @@ class SharedMemoryManager:
                 json_bytes = json_str.encode('utf-8')
                 
                 if len(json_bytes) > self.size - 8:  # reserve 8 bytes for length and timestamp
-                    print(f"Warning: Data too large for shared memory ({len(json_bytes)} > {self.size - 8})")
+                    if not getattr(self, "_oversize_warned", False):
+                        self._oversize_warned = True  # once - not every step
+                        print(f"Warning: Data too large for shared memory "
+                              f"({len(json_bytes)} > {self.size - 8}) - writes are DROPPED")
                     return False
                 
                 # write timestamp (4 bytes) and data length (4 bytes)

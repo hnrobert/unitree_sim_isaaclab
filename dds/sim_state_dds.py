@@ -33,7 +33,11 @@ class SimStateDDS(DDSObject):
         # setup the shared memory
         self.setup_shared_memory(
             input_shm_name="isaac_sim_state",  # read sim state data for publishing
-            input_size=4096,
+            # the FULL scene state is written here every step - the
+            # stock 4096 fit their 6-table scene, but the unibot hall
+            # (16 tables + 550 props) serializes to ~16KB+ and every
+            # write was DROPPED with "Data too large" spam
+            input_size=65536,
             outputshm_flag=False
         )
 
