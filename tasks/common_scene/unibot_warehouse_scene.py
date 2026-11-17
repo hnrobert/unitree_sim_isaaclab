@@ -117,8 +117,22 @@ def build_tables(table_color=TABLE_COLOR):
     return cfgs
 
 
+_LIGHT = os.environ.get("UNIBOT_LIGHT_SCENE", "0") == "1"
+
+
 def build_warehouse_props():
-    """All static Simple_Warehouse dressing (mirrors the demo)."""
+    """All static Simple_Warehouse dressing (mirrors the demo).
+
+    UNIBOT_LIGHT_SCENE=1 drops the rack rows / floor tiles / lane
+    stripes / walls / corner stacks (~470 of ~550 props) - the scene
+    spawns much faster; tables + task items + ground stay. For
+    headless patrol/nav testing where the hall dressing is noise."""
+    if _LIGHT:
+        p = _PropFactory()
+        props = []
+        props.append(p.cfg("S_TrafficCone", (-2.5, 2.8, 0.0)))
+        props.append(p.cfg("S_TrafficCone", (-6.8, -2.8, 0.0)))
+        return props
     p = _PropFactory()
     props = []
     # concrete-look 6 m floor tiles over the whole hall (visual; the
