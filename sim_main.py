@@ -500,6 +500,54 @@ def main(env_cfg):
                 time.sleep(0.033)
         _th_r.Thread(target=_pub_overhead, daemon=True).start()
 
+        # viewport stream: the SAME camera the GUI viewport looks
+        # through (FollowCamera; PerspectiveCamera fallback) rendered
+        # in-window via a RenderProduct + rgb annotator - this is the
+        # "main window" recording source (NOT a screen capture)
+        _viewport_box = {"jpeg": None}
+        _viewport_cap = {"ann": None}
+
+        def _unibot_viewport_grab():
+            try:
+                if _viewport_cap["ann"] is None:
+                    import omni.replicator.core as _rep_v
+                    import omni.usd as _ou_v
+                    _cam_v = "/World/FollowCamera"
+                    if not _ou_v.get_context().get_stage().GetPrimAtPath(_cam_v).IsValid():
+                        _cam_v = "/World/PerspectiveCamera"
+                    _rp_v = _rep_v.create.render_product(_cam_v, (1920, 1080))
+                    _ann_v = _rep_v.AnnotatorRegistry.get_annotator("rgb")
+                    _ann_v.attach(_rp_v)
+                    _viewport_cap["ann"] = _ann_v
+                import cv2 as _cv2_v
+                import numpy as _np_v
+                _d_v = _viewport_cap["ann"].get_data()
+                if _d_v is None or getattr(_d_v, "size", 0) == 0:
+                    return
+                _rgb_v = _np_v.asarray(_d_v)[..., :3][..., ::-1].copy()
+                _ok_v, _buf_v = _cv2_v.imencode(
+                    ".jpg", _rgb_v, [_cv2_v.IMWRITE_JPEG_QUALITY, 88])
+                if _ok_v:
+                    _viewport_box["jpeg"] = _buf_v.tobytes()
+            except Exception:
+                pass
+
+        def _pub_viewport():
+            _ctx_v = _zmq_r.Context()
+            _s_v = _ctx_v.socket(_zmq_r.PUB)
+            _s_v.setsockopt(_zmq_r.SNDHWM, 1)
+            _s_v.bind("tcp://*:55562")
+            while True:
+                try:
+                    _jp_v = _viewport_box["jpeg"]
+                    if _jp_v:
+                        _s_v.send(_jp_v, _zmq_r.NOBLOCK)
+                except Exception:
+                    pass
+                time.sleep(0.033)
+        _th_r.Thread(target=_pub_viewport, daemon=True).start()
+        print("[unibot] viewport stream on tcp://*:55562 (in-window render)")
+
         def _unibot_overhead_grab():
             import cv2 as _cv2_r
             try:
@@ -514,6 +562,7 @@ def main(env_cfg):
         print("[unibot] overhead camera stream on tcp://*:55561 (main-loop capture)")
     except Exception as e:
         _unibot_overhead_grab = None
+        _unibot_viewport_grab = None
         print(f"[unibot] overhead publisher skipped: {e}")
 
     # unibot warehouse: COLLISION-FILTER the robot against every work
@@ -729,6 +778,8 @@ def main(env_cfg):
                     follow_camera.update()
                 if _unibot_overhead_grab is not None and loop_count % 3 == 0:
                     _unibot_overhead_grab()  # main thread: PhysX-safe
+                if _unibot_viewport_grab is not None and loop_count % 2 == 0:
+                    _unibot_viewport_grab()
 
                 # print statistics and loop frequency periodically
                 if current_time - last_stats_time >= args_cli.stats_interval:
