@@ -471,6 +471,35 @@ def main(env_cfg):
     except Exception as e:
         print(f"[unibot] item material dressing skipped: {e}")
 
+    # unibot warehouse: publish the overhead camera as a ZMQ JPEG
+    # stream (tcp://*:55561) for the host-side recorder
+    try:
+        import threading as _th_r
+        import zmq as _zmq_r
+
+        def _pub_overhead():
+            _ctx = _zmq_r.Context()
+            _s = _ctx.socket(_zmq_r.PUB)
+            _s.setsockopt(_zmq_r.SNDHWM, 1)
+            _s.bind("tcp://*:55561")
+            import cv2 as _cv2_r
+            import numpy as _np_r
+            while True:
+                try:
+                    cam = env.scene["overhead_camera"]
+                    rgb = cam.data.output["rgb"].torch[0].cpu().numpy()[..., :3]
+                    _ok, _buf = _cv2_r.imencode(
+                        ".jpg", rgb[..., ::-1], [_cv2_r.IMWRITE_JPEG_QUALITY, 88])
+                    if _ok:
+                        _s.send(_buf.tobytes(), _zmq_r.NOBLOCK)
+                except Exception:
+                    pass
+                time.sleep(0.033)
+        _th_r.Thread(target=_pub_overhead, daemon=True).start()
+        print("[unibot] overhead camera stream on tcp://*:55561")
+    except Exception as e:
+        print(f"[unibot] overhead publisher skipped: {e}")
+
     # unibot warehouse: COLLISION-FILTER the robot against every work
     # table (tops + legs). The stock base drive writes root VELOCITY;
     # a table contact interlocks it irreversibly (all channels dead).
