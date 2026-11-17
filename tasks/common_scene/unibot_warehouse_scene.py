@@ -176,9 +176,10 @@ class UnibotWarehouseSceneCfg(InteractiveSceneCfg):
         prim_path="/World/light",
         spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
     )
-    # AGV "mast" camera: rides above the base, pitched ~55 deg down
-    # toward the manipulation workspace in front - the record-overhead
-    # view. Parents under the AGV link so it follows the robot.
+    # AGV "mast" camera: directly ABOVE the front workspace, looking
+    # STRAIGHT DOWN (top-down manipulation view). z-rotation puts the
+    # robot's forward (+x) at the TOP of the image. Parents under the
+    # AGV link so it follows the robot.
     from isaaclab.sensors import CameraCfg
     overhead_camera = CameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/Geometry/AGV_link/overhead_cam",
@@ -186,7 +187,7 @@ class UnibotWarehouseSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=18.0, horizontal_aperture=20.955, clipping_range=(0.05, 1.0e5)),
         offset=CameraCfg.OffsetCfg(
-            pos=(0.30, 0.0, 1.70), rot=(0.0, 0.4037, 0.0, 0.9149),
+            pos=(0.35, 0.0, 2.10), rot=(0.0, 0.0, -0.7071, 0.7071),
             convention="opengl"),
     )
 

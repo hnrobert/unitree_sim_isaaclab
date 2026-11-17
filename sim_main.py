@@ -472,7 +472,15 @@ def main(env_cfg):
         print(f"[unibot] item material dressing skipped: {e}")
 
     # unibot warehouse: publish the overhead camera as a ZMQ JPEG
-    # stream (tcp://*:55561) for the host-side recorder
+    # stream (tcp://*:55561) for the host-side recorder.
+    # THREAD RULE: this thread only SENDS. Reading camera sensor data
+    # lazily updates sensor buffers (PhysX getGlobalPose/Velocity
+    # under the hood) - doing that from a background thread while the
+    # sim steps trips PhysX's concurrent-API guard (the
+    # "overlapping write on another thread" error spam). The frame is
+    # captured in the MAIN loop (see _unibot_overhead_grab below) and
+    # handed over via this box.
+    _overhead_box = {"jpeg": None}
     try:
         import threading as _th_r
         import zmq as _zmq_r
@@ -482,22 +490,30 @@ def main(env_cfg):
             _s = _ctx.socket(_zmq_r.PUB)
             _s.setsockopt(_zmq_r.SNDHWM, 1)
             _s.bind("tcp://*:55561")
-            import cv2 as _cv2_r
-            import numpy as _np_r
             while True:
                 try:
-                    cam = env.scene["overhead_camera"]
-                    rgb = cam.data.output["rgb"].torch[0].cpu().numpy()[..., :3]
-                    _ok, _buf = _cv2_r.imencode(
-                        ".jpg", rgb[..., ::-1], [_cv2_r.IMWRITE_JPEG_QUALITY, 88])
-                    if _ok:
-                        _s.send(_buf.tobytes(), _zmq_r.NOBLOCK)
+                    _jp = _overhead_box["jpeg"]
+                    if _jp:
+                        _s.send(_jp, _zmq_r.NOBLOCK)
                 except Exception:
                     pass
                 time.sleep(0.033)
         _th_r.Thread(target=_pub_overhead, daemon=True).start()
-        print("[unibot] overhead camera stream on tcp://*:55561")
+
+        def _unibot_overhead_grab():
+            import cv2 as _cv2_r
+            try:
+                cam = env.scene["overhead_camera"]
+                rgb = cam.data.output["rgb"].torch[0].cpu().numpy()[..., :3]
+                _ok, _buf = _cv2_r.imencode(
+                    ".jpg", rgb[..., ::-1], [_cv2_r.IMWRITE_JPEG_QUALITY, 88])
+                if _ok:
+                    _overhead_box["jpeg"] = _buf.tobytes()
+            except Exception:
+                pass
+        print("[unibot] overhead camera stream on tcp://*:55561 (main-loop capture)")
     except Exception as e:
+        _unibot_overhead_grab = None
         print(f"[unibot] overhead publisher skipped: {e}")
 
     # unibot warehouse: COLLISION-FILTER the robot against every work
@@ -711,6 +727,8 @@ def main(env_cfg):
                 controller.step()
                 if follow_camera is not None:
                     follow_camera.update()
+                if _unibot_overhead_grab is not None and loop_count % 3 == 0:
+                    _unibot_overhead_grab()  # main thread: PhysX-safe
 
                 # print statistics and loop frequency periodically
                 if current_time - last_stats_time >= args_cli.stats_interval:
