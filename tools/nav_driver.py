@@ -55,13 +55,18 @@ LANE_Y = 0.30
 # home-rotated dx/dy); the spawn is our task layout's ROBOT_POS
 HOME_X, HOME_Y, HOME_YAW = -8.5, 0.35, 0.0
 
-# control constants (from the demo's driver)
-# Measured drive gains (stock velocity write + table collision
-# filter): commands attenuate LINEARLY - v ~5.4x, w ~10x - so
-# command scaled-up rates; the closed loops close the residue
-V_CREEP = 0.50
-V_TRANSIT = 1.50
-W_TURN = 3.0
+# control constants - RE-TUNED for the merged upstream sysid (2026-11-18):
+# the base response model now applies commands ~1:1 (linear gain 1.0 /
+# angular 0.97), while the OLD stock velocity write attenuated commands
+# v ~5.4x / w ~10x, so the previous values (0.5/1.5/3.0) were scaled-up
+# compensations that would now command 5x the real turn rate. Caps follow
+# the REAL G1-D AGV limits (unitree_robotskills g1d_r1d_navigation
+# g1_agv_client: vx <= 1.5 m/s, vyaw <= 0.6 rad/s); actual speeds match
+# what the old attenuated numbers produced on the floor (creep ~0.1 m/s,
+# transit faster, turn 0.6 rad/s = 2x the old 0.3 actual).
+V_CREEP = 0.10
+V_TRANSIT = 1.20
+W_TURN = 0.60
 K_LAT = 0.8                  # lateral homing gain
 K_HEAD = 1.2                 # heading P gain while creeping
 POS_TOL = 0.05
