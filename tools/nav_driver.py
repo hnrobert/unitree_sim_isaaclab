@@ -72,6 +72,14 @@ K_HEAD = 1.2                 # heading P gain while creeping
 POS_TOL = 0.05
 YAW_TOL = 0.08
 LATERAL_DEAD = 0.05
+# robotskills borrow (unitree_robotskills g1d_r1d_navigation): STOP LEAD
+# pre-compensates the coasting after a zero command (motion.py
+# turn_stop_lead_s), sized to the merged sysid response (0.10 s delay +
+# half the 0.15 s decel ramp at 0.6 rad/s)
+STOP_LEAD_S = 0.15
+# blocked is a STATUS, not a 240 s hang (robotskills MotionExecutor
+# blocked_abort_s): abort the leg so the patrol back-off can retry
+BLOCKED_ABORT_S = 3.0
 
 
 # table rectangles (x0, y0, x1, y1) - full hall dressing footprint;
@@ -125,6 +133,8 @@ class NavDriver:
             lambda m: setattr(self, "odom", m), 1)
         self.reset_pub = ChannelPublisher("rt/reset_pose/cmd", String_)
         self.reset_pub.Init()
+        self._last_w = 0.0   # last commanded yaw rate (stop-lead reference)
+        self.last_fail = None  # "blocked" / "timeout" of the last maneuver
         self.zero()
 
     def reset_pose(self, category="2", wait=8.0):
@@ -145,6 +155,7 @@ class NavDriver:
         self.cmd.Write(self._twist(0.0, 0.0))
 
     def send(self, v, w):
+        self._last_w = w
         self.cmd.Write(self._twist(v, w))
 
     # ---- feedback -------------------------------------------------------
@@ -167,31 +178,52 @@ class NavDriver:
         wy = HOME_Y + s * p.x + c * p.y
         return wx, wy, wrap(yaw + HOME_YAW)
 
+    def stationary(self, samples=3, gap=0.08, move_tol=0.004, yaw_tol=0.015):
+        """True when the base has actually stopped: pose inside the
+        tolerance is NOT arrival while still coasting (robotskills
+        NavigationManager: arrival = pose + stationary, < 0.03 m/s)."""
+        p0 = self.pose()
+        for _ in range(samples - 1):
+            time.sleep(gap)
+            p = self.pose()
+            if math.hypot(p[0] - p0[0], p[1] - p0[1]) > move_tol or abs(wrap(p[2] - p0[2])) > yaw_tol:
+                return False
+            p0 = p
+        return True
+
     # ---- demo control logic ---------------------------------------------
     def spin_to(self, yaw, timeout=25.0, tol=YAW_TOL):
         t0 = time.time()
         while time.time() - t0 < timeout:
             _, _, cur = self.pose()
             err = wrap(yaw - cur)  # demo convention: err = desired - yaw
-            if abs(err) < tol:
+            # STOP LEAD (robotskills motion.py): the base keeps rotating
+            # delay + decel after the zero command - trigger the stop at
+            # tol + |w| * lead so the coast lands IN the tolerance
+            if abs(err) < tol + abs(self._last_w) * STOP_LEAD_S:
                 self.zero()
                 # odom lags the motion - settle and RE-CHECK once
                 time.sleep(0.4)
                 if abs(wrap(yaw - self.pose()[2])) < tol + 0.04:
                     self.zero()
                     return True
-            # two-rate approach: fast outside 0.6 rad, gentle inside
-            # (the odom lag overruns a fixed high rate by many degrees)
-            mag = W_TURN if abs(err) > 0.6 else max(0.25, 0.9 * abs(err))
+            # two-rate approach: fast outside 0.6 rad, PURE proportional
+            # inside - no floor, the final ticks slow into the target
+            # (robotskills remainder clamp: the last tick covers only the
+            # remaining angle, overshoot is impossible by construction)
+            mag = W_TURN if abs(err) > 0.6 else 0.9 * abs(err)
             self.send(0.0, mag * (1 if err > 0 else -1))
             time.sleep(0.05)
         self.zero()
+        self.last_fail = "timeout"
         return False
 
     def forward_to(self, x, y, final_yaw, timeout=240.0):
         """Creep to (x, y): face the target, proportional heading +
         lateral homing (the demo's forward_line), no-overshoot legs."""
         t0 = time.time()
+        blocked_since = None
+        self.last_fail = None
         while time.time() - t0 < timeout:
             cx, cy, cyaw = self.pose()
             dx, dy = x - cx, y - cy
@@ -206,6 +238,10 @@ class NavDriver:
                 self.spin_to(bearing)
                 continue
             v = V_CREEP if dist < 0.5 else V_TRANSIT
+            # soft landing (robotskills remainder clamp analogue): never
+            # command more speed than the remaining distance covers,
+            # floor keeps it converging into POS_TOL
+            v = min(v, max(0.05, dist))
             # heading correction + lateral homing, capped like the demo
             w = K_HEAD * head_err
             w = max(-0.5, min(0.5, w))
@@ -217,12 +253,24 @@ class NavDriver:
                 if BUMPER_LOG["hits"] % 20 == 1:
                     print("  bumper: holding at (%.2f,%.2f) yaw %.0f"
                           % (cx, cy, math.degrees(cyaw)), flush=True)
+                # blocked is a STATUS, not a hang (robotskills
+                # blocked_abort_s): abort so the caller can back off
+                # and retry instead of waiting out the whole timeout
+                if blocked_since is None:
+                    blocked_since = time.time()
+                elif time.time() - blocked_since > BLOCKED_ABORT_S:
+                    print("  bumper: blocked %.0fs - aborting leg" % BLOCKED_ABORT_S, flush=True)
+                    self.zero()
+                    self.last_fail = "blocked"
+                    return False
                 self.send(0.0, w)
                 time.sleep(0.05)
                 continue
+            blocked_since = None
             self.send(v, w)
             time.sleep(0.05)
         self.zero()
+        self.last_fail = "timeout"
         return False
 
     def leave_station(self, lane_y, timeout=30.0):
@@ -270,9 +318,13 @@ class NavDriver:
         else:
             ok = self.forward_to(x, y, yaw_deg)
             ok &= self.spin_to(math.radians(yaw_deg))
-        # settle still (the demo braces before arm work)
+        # settle still (the demo braces before arm work): WAIT until the
+        # base has actually stopped - robotskills lesson, pose inside the
+        # tolerance is not arrival while the base is still coasting
         self.zero()
-        time.sleep(0.4)
+        t_settle = time.time()
+        while time.time() - t_settle < 2.0 and not self.stationary():
+            self.zero()
         self.zero()
         cx, cy, cyaw = self.pose()
         ex, ey = cx - x, cy - y
@@ -347,8 +399,11 @@ def patrol(d, which="all", rounds=1):
             # stalled or missed: back off straight and retry once;
             # a second miss means the base is contact-locked -> full
             # scene reset (the only reliable unlock), mark RESET, move on
+            # (d.last_fail: "blocked" = bumper abort, "timeout" = leg
+            #  timeout, None = finished but pose outside tolerance)
             print(f"  {tag} attempt {attempt} missed "
-                  f"({cx:+.2f},{cy:+.2f},{math.degrees(cyaw):+.0f}) - back off", flush=True)
+                  f"({cx:+.2f},{cy:+.2f},{math.degrees(cyaw):+.0f}) "
+                  f"[{d.last_fail or 'pose'}] - back off", flush=True)
             if attempt == 2:
                 result = "FAIL"
                 break
