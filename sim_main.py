@@ -510,16 +510,28 @@ def main(env_cfg):
                         continue
                 return False
             _t_w = _xf_w.GetTranslateOp() or _xf_w.AddTranslateOp()
-            _ok_t = _set_any(_t_w, [Gf.Vec3d(0.0, -11.0, 22.0), Gf.Vec3f(0.0, -11.0, 22.0)])
+            _ok_t = _set_any(_t_w, [Gf.Vec3d(-14.0, -9.0, 12.0), Gf.Vec3f(-14.0, -9.0, 12.0)])
             _o_w = _xf_w.GetOrientOp() or _xf_w.AddOrientOp()
             _ok_o = _set_any(_o_w, [
-                Gf.Quatf(0.95557, Gf.Vec3f(0.29476, 0.0, 0.0)),
-                Gf.Quatd(0.95557, Gf.Vec3d(0.29476, 0.0, 0.0))])
-            print(f"[unibot] overview camera forced at (0,-11,22) t={_ok_t} o={_ok_o}")
+                Gf.Quatf(0.94027, Gf.Vec3f(0.34043, 0.0, 0.0)),
+                Gf.Quatd(0.94027, Gf.Vec3d(0.34043, 0.0, 0.0))])
+            print(f"[unibot] overview camera forced at (-14,-9,12) t={_ok_t} o={_ok_o}")
         else:
             print("[unibot] overview camera prim MISSING")
     except Exception as e:
         print(f"[unibot] overview camera force failed: {e}")
+
+    # unibot: capture the intended spawn pose IMMEDIATELY - the base
+    # free-rolls during the long DDS/camera warmup (measured ~1 m,
+    # sometimes nose-deep into a table = the "lying on the table"),
+    # and re-anchor to it below once the control loop starts
+    try:
+        _sp_pose = env.scene["robot"].data.root_link_pose_w.torch[0].clone()
+        print(f"[unibot] spawn anchor captured: ({float(_sp_pose[0]):.2f},"
+              f"{float(_sp_pose[1]):.2f}, z {float(_sp_pose[2]):.2f})")
+    except Exception as e:
+        _sp_pose = None
+        print(f"[unibot] spawn anchor failed: {e}")
 
     # unibot warehouse: publish the overhead camera as a ZMQ JPEG
     # stream (tcp://*:55561) for the host-side recorder.
@@ -530,24 +542,33 @@ def main(env_cfg):
     # "overlapping write on another thread" error spam). The frame is
     # captured in the MAIN loop (see _unibot_overhead_grab below) and
     # handed over via this box.
-    _overhead_box = {"jpeg": None}
+    _overhead_box = {"raw": None}
     try:
         import threading as _th_r
         import zmq as _zmq_r
 
         def _pub_overhead():
+            # worker: ENCODE + send (jpeg of 960x720 is 10-15 ms - it
+            # was done on the MAIN thread, blocking the control loop
+            # and capping the stream at ~6 choppy fps)
+            import cv2 as _cv2_r
+            import numpy as _np_r
             _ctx = _zmq_r.Context()
             _s = _ctx.socket(_zmq_r.PUB)
             _s.setsockopt(_zmq_r.SNDHWM, 1)
             _s.bind("tcp://*:55561")
             while True:
                 try:
-                    _jp = _overhead_box["jpeg"]
-                    if _jp:
-                        _s.send(_jp, _zmq_r.NOBLOCK)
+                    _arr = _overhead_box["raw"]
+                    if _arr is not None:
+                        _ok, _buf = _cv2_r.imencode(
+                            ".jpg", _arr, [_cv2_r.IMWRITE_JPEG_QUALITY, 85])
+                        if _ok:
+                            _s.send(_buf.tobytes(), _zmq_r.NOBLOCK)
+                        _overhead_box["raw"] = None  # consume
                 except Exception:
                     pass
-                time.sleep(0.033)
+                time.sleep(0.02)
         _th_r.Thread(target=_pub_overhead, daemon=True).start()
 
         # viewport stream: the SAME camera the GUI viewport looks
@@ -609,14 +630,12 @@ def main(env_cfg):
         print("[unibot] viewport stream on tcp://*:55562 (in-window render)")
 
         def _unibot_overhead_grab():
-            import cv2 as _cv2_r
+            # main thread: ONLY the (PhysX-safe) sensor read + a cheap
+            # contiguous copy; encoding moved to the sender thread
             try:
                 cam = env.scene["overhead_camera"]
-                rgb = cam.data.output["rgb"].torch[0].cpu().numpy()[..., :3]
-                _ok, _buf = _cv2_r.imencode(
-                    ".jpg", rgb[..., ::-1], [_cv2_r.IMWRITE_JPEG_QUALITY, 88])
-                if _ok:
-                    _overhead_box["jpeg"] = _buf.tobytes()
+                rgb = cam.data.output["rgb"].torch[0].cpu().numpy()
+                _overhead_box["raw"] = rgb[..., :3][..., ::-1].copy()
             except Exception:
                 pass
         print("[unibot] overhead camera stream on tcp://*:55561 (main-loop capture)")
@@ -638,11 +657,13 @@ def main(env_cfg):
         for _p_f in _st_f.Traverse():
             _n_f = _p_f.GetName()
             _path_f = str(_p_f.GetPath())
-            if (_n_f.startswith("Table") and _p_f.HasAPI(_UP_f.CollisionAPI)) or (
-                    _n_f.startswith("Table") and _path_f.count("/") <= 4):
+            if _n_f.startswith("Table") and _path_f.count("/") <= 4:
                 _tables_f.append(_Sdf_f.Path(_path_f))
             if _path_f.startswith("/World/envs/env_0/Robot") and _p_f.HasAPI(_UP_f.CollisionAPI):
                 _robot_f.append(_p_f)
+        # EVERY robot collision link gets filtered (the first version
+        # only covered 4 base links - the ARMS still hit the tables,
+        # saturating their 25 Nm effort limit = the violent twitching)
         _n_f = 0
         for _rp_f in _robot_f:
             _fp_f = _UP_f.FilteredPairsAPI.Apply(_rp_f)
@@ -836,7 +857,42 @@ def main(env_cfg):
                 controller.step()
                 if follow_camera is not None:
                     follow_camera.update()
-                if _unibot_overhead_grab is not None and loop_count % 3 == 0:
+                # one-shot teleport back to the spawn anchor: kills the
+                # warmup free-roll drift (a SINGLE pose write is safe -
+                # only every-step writes fought the solver)
+                if loop_count == 30 and _sp_pose is not None:
+                    try:
+                        _rb = env.scene["robot"]
+                        _ids = getattr(_rb, "_env_ids", None) \
+                            or torch.tensor([0], device=str(_rb.device))
+                        _rb.write_root_link_pose_to_sim_index(
+                            root_pose=_sp_pose.unsqueeze(0), env_ids=_ids)
+                        _rb.write_root_link_velocity_to_sim_index(
+                            root_velocity=torch.zeros((1, 6), device=str(_rb.device)),
+                            env_ids=_ids)
+                        print("[unibot] base re-anchored to spawn")
+                    except Exception as _e3:
+                        print(f"[unibot] re-anchor failed: {_e3}")
+                # one-shot: after the forced overview has rendered for
+                # ~10 s, hand the viewport back to its FREE camera -
+                # kit copies the current view into the free camera on
+                # detach, so the user keeps the overview framing AND
+                # regains drag/zoom navigation (looking THROUGH a prim
+                # camera locks navigation = the "fixed" complaint)
+                if loop_count == 200 and not globals().get("_unibot_freed"):
+                    globals()["_unibot_freed"] = True
+                    try:
+                        import omni.kit.viewport.utility as _vp_u2
+                        for _nm2 in ([None] if not hasattr(_vp_u2, "get_viewport_window_names")
+                                     else _vp_u2.get_viewport_window_names()):
+                            _vp2 = (_vp_u2.get_viewport_from_window_name(_nm2)
+                                    if _nm2 else _vp_u2.get_active_viewport())
+                            if _vp2 is not None:
+                                _vp2.camera_path = ""  # "" = free camera
+                        print("[unibot] viewport released to the free camera (drag/zoom live)")
+                    except Exception as _e2:
+                        print(f"[unibot] viewport release skipped: {_e2}")
+                if _unibot_overhead_grab is not None and loop_count % 2 == 0:
                     _unibot_overhead_grab()  # main thread: PhysX-safe
                 if _unibot_viewport_grab is not None and loop_count % 2 == 0:
                     _unibot_viewport_grab()

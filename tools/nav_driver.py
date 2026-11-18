@@ -38,9 +38,13 @@ from unitree_sdk2py.idl.nav_msgs.msg.dds_ import Odometry_
 DIVIDER_X = (-8.5, -11.0, -13.75, -15.25, -18.0, -19.5)
 ROW_DY = 1.7
 TABLE_POS = tuple((float(x), float(dy)) for x in DIVIDER_X for dy in (-ROW_DY, ROW_DY))
-DRESSING_TABLES = ((6.0, 3.0), (10.0, 3.2), (6.0, -3.0), (12.0, -3.4))
+DRESSING_TABLES = ((8.0, 2.6), (10.0, 2.6), (12.0, 2.6), (14.0, 2.6))  # tight row, 2 m pitch (was scattered)
 
-STATION_STANDOFF = 0.90      # |y| of the parking spot
+# STATION: nose = |y| + 0.34 must stay <= table face (1.25) minus the
+# bumper margin (0.05) -> |y| <= 0.86. The old 0.90 parked 1 cm from
+# the face - ANY drift pushed the nose through the table (the
+# pass-through/clips). 0.82 keeps ~9 cm clearance bumper included.
+STATION_STANDOFF = 0.82
 # TRANSIT LANE: with the tables rotated (long edge to the corridor),
 # the north/south LEG lines sit at |y| = 0.89..1.25 - driving across
 # at the station height rams the legs (measured stall at x -9.98).
@@ -63,6 +67,31 @@ K_HEAD = 1.2                 # heading P gain while creeping
 POS_TOL = 0.05
 YAW_TOL = 0.08
 LATERAL_DEAD = 0.05
+
+
+# table rectangles (x0, y0, x1, y1) - full hall dressing footprint;
+# tables are axis-aligned: 1.8 (x) x 0.9 (y), centers on the row bands
+def table_rects():
+    rects = []
+    for (tx, ty) in TABLE_POS:
+        rects.append((tx - 0.9 - 0.05, ty - 0.45 - 0.05,
+                      tx + 0.9 + 0.05, ty + 0.45 + 0.05))  # +5cm margin
+    return rects
+
+
+TABLE_RECTS = table_rects()
+NOSE = 0.34  # robot half-length along heading
+BUMPER_LOG = {"hits": 0}
+
+
+def nose_blocked(x, y, yaw):
+    """True if the predicted nose tip enters any table rectangle."""
+    nx = x + NOSE * math.cos(yaw)
+    ny = y + NOSE * math.sin(yaw)
+    for (x0, y0, x1, y1) in TABLE_RECTS:
+        if x0 <= nx <= x1 and y0 <= ny <= y1:
+            return True
+    return False
 
 
 def wrap(a):
@@ -175,6 +204,17 @@ class NavDriver:
             # heading correction + lateral homing, capped like the demo
             w = K_HEAD * head_err
             w = max(-0.5, min(0.5, w))
+            # predictive bumper: freeze forward motion if the nose
+            # would enter a table footprint (spin in place is fine)
+            if v > 0 and nose_blocked(cx + v * 0.25 * math.cos(cyaw),
+                                      cy + v * 0.25 * math.sin(cyaw), cyaw):
+                BUMPER_LOG["hits"] += 1
+                if BUMPER_LOG["hits"] % 20 == 1:
+                    print("  bumper: holding at (%.2f,%.2f) yaw %.0f"
+                          % (cx, cy, math.degrees(cyaw)), flush=True)
+                self.send(0.0, w)
+                time.sleep(0.05)
+                continue
             self.send(v, w)
             time.sleep(0.05)
         self.zero()

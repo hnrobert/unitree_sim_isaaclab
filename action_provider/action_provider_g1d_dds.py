@@ -168,14 +168,45 @@ class G1DDDSActionProvider(ActionProvider):
         for i in self._lift_ids:
             self._targets[i] = self._lift_height / len(self._lift_ids)
 
+    def _idle_park(self, now):
+        """Idle drift guard: with no cmd_vel for >3 s and the base more
+        than 0.25 m from its spawn, teleport it back (single pose
+        write + zero velocity - the every-step write pattern diverged,
+        a one-shot park is the demo's proven hard-park). The warmup
+        free-roll left the robot nose-deep in tables otherwise."""
+        if now - getattr(self, "_last_park", 0.0) < 5.0:
+            return
+        if self._home_pos is None:
+            return
+        pose = self.robot.data.root_link_pose_w.torch[0]
+        dx, dy = float(pose[0]) - self._home_pos[0], float(pose[1]) - self._home_pos[1]
+        if math.hypot(dx, dy) < 0.25:
+            return
+        self._last_park = now
+        home = torch.tensor(
+            [[self._home_pos[0], self._home_pos[1], float(pose[2]),
+              float(pose[3]), float(pose[4]), float(pose[5]), float(pose[6])]],
+            device=self._device)
+        ids = torch.tensor([0], device=self._device)
+        try:
+            self.robot.write_root_link_pose_to_sim_index(root_pose=home, env_ids=ids)
+            self.robot.write_root_link_velocity_to_sim_index(
+                root_velocity=torch.zeros((1, 6), device=self._device), env_ids=ids)
+            print(f"[{self.name}] idle-park: base was ({dx:+.2f},{dy:+.2f}) off spawn - re-anchored")
+        except Exception as e:
+            print(f"[{self.name}] idle-park failed: {e}")
+
     def _apply_base(self, cmd, now):
         """Drive the base with the rt/cmd_vel_no_limit twist (stock
         root-VELOCITY write). Contact lockups are prevented OUTSIDE
         physics: the AGV links are collision-filtered against the
         task tables (see sim_main unibot_filter_tables)."""
         v = w = 0.0
-        if cmd and now - cmd.get("move_stamp", 0.0) < self.CMD_TIMEOUT:
+        _has_cmd = bool(cmd and now - cmd.get("move_stamp", 0.0) < self.CMD_TIMEOUT)
+        if _has_cmd:
             v, w = float(cmd.get("lin_x", 0.0)), float(cmd.get("ang_z", 0.0))
+        else:
+            self._idle_park(now)
         v = self._v = self._slew(self._v, v, self.SLEW_LINEAR)
         w = self._w = self._slew(self._w, w, self.SLEW_ANGULAR)
         pose = self.robot.data.root_link_pose_w.torch[0]

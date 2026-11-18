@@ -89,6 +89,13 @@ G1D_ARM_ACTUATOR = ImplicitActuatorCfg(
     joint_names_expr=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint"],
     stiffness={".*_shoulder_.*_joint": 300.0, ".*_elbow_joint": 400.0, ".*_wrist_.*_joint": 400.0},
     damping={".*_shoulder_.*_joint": 3.0, ".*_elbow_joint": 2.5, ".*_wrist_.*_joint": 2.5},
+    # EFFORT HEADROOM (not damping): holding the default pose already
+    # pins the URDF's 25 Nm limit (tau_est == 25.00 at IDLE, dq rings
+    # ~12 rad/s; on table contact the shoulder swings +-1.2 rad - the
+    # reported twitching). Damping 3x made it WORSE (dq 26). With 60
+    # Nm ceiling the servo never saturates and stays stable; the real
+    # robot enforces its own limits.
+    effort_limit_sim=60.0,
 )
 
 G1D_CFG_WITH_DEX1 = ArticulationCfg(

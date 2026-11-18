@@ -41,7 +41,7 @@ TABLE_SIZE = (1.8, 0.9, 0.06)  # long axis X - the corridor-facing
 # arm's reach from the corridor side (was 1.8 m deep - unreachable)
 TABLE_COLOR = (0.56, 0.42, 0.27)
 LEG_COLOR = (0.32, 0.32, 0.34)
-DRESSING_TABLES = ((6.0, 3.0), (10.0, 3.2), (6.0, -3.0), (12.0, -3.4))
+DRESSING_TABLES = ((8.0, 2.6), (10.0, 2.6), (12.0, 2.6), (14.0, 2.6))  # tight row, 2 m pitch (was scattered)
 
 
 def _prop(name):
@@ -211,11 +211,11 @@ class UnibotWarehouseSceneCfg(InteractiveSceneCfg):
     # down at the hall center; wide lens frames the full 48x30 floor
     world_camera = CameraBaseCfg.get_camera_config(
         prim_path="/World/PerspectiveCamera",
-        pos_offset=(0.0, -11.0, 22.0),
-        # ros-convention quat (the preset's OffsetCfg convention="ros"):
-        # look NORTH and 55.7 deg down at the hall center
-        rot_offset=(-0.3304, 0.3304, 0.62517, 0.62517),
-        focal_length=11.0)
+        pos_offset=(-14.0, -9.0, 12.0),
+        # ros-convention quat: centered on the WORK GRID, tighter lens
+        # (12-table zone + margin, not the whole 48 m hall)
+        rot_offset=(-0.29992, 0.29992, 0.64035, 0.64035),
+        focal_length=18.0)
 
 
 # ---- challenge-task tabletop dressing (unibot_task_layout.yaml) --------
