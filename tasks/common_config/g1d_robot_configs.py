@@ -51,6 +51,8 @@ class G1DRobotPresets:
     ) -> ArticulationCfg:
         """G1-D with Dex3 hands (same arguments as :meth:`g1_d_dex1`)."""
         base = G1D_CFG_WITH_DEX3
+        if base is None:  # Dex3 URDF not published in the fetch_assets dataset yet (robots/unitree_g1d.py)
+            raise FileNotFoundError("G1-D Dex3 asset not available - re-run fetch_assets.sh once published")
         joint_pos = {**base.init_state.joint_pos, **(custom_joint_pos or {})}
         return base.replace(
             prim_path=prim_path,

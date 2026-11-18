@@ -156,18 +156,26 @@ G1D_CFG_WITH_DEX1 = _g1d_cfg(
     },
 )
 
-# G1-D with Dex3 hands (asset: assets/urdf/g1_d_description/g1_d_dex3_1.urdf); hand gains as on the G1 Dex3
-G1D_CFG_WITH_DEX3 = _g1d_cfg(
-    G1D_DEX3_ASSET,
-    G1D_DEX3_JOINT_POS,
-    {
-        "hands": ImplicitActuatorCfg(
-            joint_names_expr=[".*_hand_index_.*_joint", ".*_hand_middle_.*_joint", ".*_hand_thumb_.*_joint"],
-            effort_limit=300,
-            velocity_limit=100.0,
-            stiffness={".*": 100.0},
-            damping={".*": 10.0},
-            armature={".*": 0.1},
-        ),
-    },
-)
+# G1-D with Dex3 hands (asset: assets/urdf/g1_d_description/g1_d_dex3_1.urdf); hand gains as on the G1 Dex3.
+# The Dex3 URDF is not yet in the fetch_assets dataset (upstream code shipped ahead of the asset), so build the
+# config lazily-tolerant: without the file G1D_CFG_WITH_DEX3 stays None, every Dex1 path imports fine and a Dex3
+# task fails at its robot preset with a clear message instead of breaking the whole module import.
+try:
+    G1D_CFG_WITH_DEX3 = _g1d_cfg(
+        G1D_DEX3_ASSET,
+        G1D_DEX3_JOINT_POS,
+        {
+            "hands": ImplicitActuatorCfg(
+                joint_names_expr=[".*_hand_index_.*_joint", ".*_hand_middle_.*_joint", ".*_hand_thumb_.*_joint"],
+                effort_limit=300,
+                velocity_limit=100.0,
+                stiffness={".*": 100.0},
+                damping={".*": 10.0},
+                armature={".*": 0.1},
+            ),
+        },
+    )
+except FileNotFoundError:
+    print(f"[robots.unitree_g1d] {G1D_DEX3_ASSET} not found - Dex3 preset disabled "
+          "(re-run fetch_assets.sh once the asset is published); Dex1 presets are unaffected")
+    G1D_CFG_WITH_DEX3 = None

@@ -45,6 +45,8 @@ class R1A7DRobotPresets:
     ) -> ArticulationCfg:
         """R1-A7-D with Dex2-5 tendon hands (same arguments as :meth:`r1_d_dex1`)."""
         base = R1A7D_CFG_WITH_DEX2_5
+        if base is None:  # Dex2-5 URDF not published in the fetch_assets dataset yet (robots/unitree_r1a7d.py)
+            raise FileNotFoundError("R1-A7-D Dex2-5 asset not available - re-run fetch_assets.sh once published")
         joint_pos = {**base.init_state.joint_pos, **(custom_joint_pos or {})}
         return base.replace(
             prim_path=prim_path,

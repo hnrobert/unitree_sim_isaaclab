@@ -73,6 +73,10 @@ def _walk_packages(
         if info.ispkg:
             try:
                 __import__(info.name)
+            except FileNotFoundError as e:
+                # a robot variant whose asset is not published in the fetch_assets dataset yet
+                # (its presets register a None cfg): skip its task packages instead of failing the walk
+                print(f"[importer] skipped {info.name} (robot asset missing): {e}")
             except Exception:
                 if onerror is not None:
                     onerror(info.name)

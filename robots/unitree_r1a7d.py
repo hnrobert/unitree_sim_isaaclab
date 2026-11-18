@@ -139,8 +139,15 @@ R1A7D_CFG_WITH_DEX1 = _r1a7d_cfg(
 
 # Dex2-5 tendon hands: open (0 rad) by default. The joint drive is the simulated torque transmission of
 # action_provider/dex2_5_torque.py (the action provider turns the two motor torques of a hand into joint targets).
-R1A7D_CFG_WITH_DEX2_5 = _r1a7d_cfg(
-    R1A7D_DEX2_5_ASSET,
-    {DEX2_5_JOINT_EXPR: 0.0},
-    {"hands": ImplicitActuatorCfg(joint_names_expr=[DEX2_5_JOINT_EXPR], stiffness=DEX2_5_STIFFNESS, damping=DEX2_5_DAMPING, armature=DEX2_5_ARMATURE)},
-)
+# Like the G1-D Dex3 asset, the Dex2-5 URDF is not yet in the fetch_assets dataset - degrade to None with a
+# warning instead of breaking the module import (every Dex1 preset keeps working).
+try:
+    R1A7D_CFG_WITH_DEX2_5 = _r1a7d_cfg(
+        R1A7D_DEX2_5_ASSET,
+        {DEX2_5_JOINT_EXPR: 0.0},
+        {"hands": ImplicitActuatorCfg(joint_names_expr=[DEX2_5_JOINT_EXPR], stiffness=DEX2_5_STIFFNESS, damping=DEX2_5_DAMPING, armature=DEX2_5_ARMATURE)},
+    )
+except FileNotFoundError:
+    print(f"[robots.unitree_r1a7d] {R1A7D_DEX2_5_ASSET} not found - Dex2-5 preset disabled "
+          "(re-run fetch_assets.sh once the asset is published); Dex1 presets are unaffected")
+    R1A7D_CFG_WITH_DEX2_5 = None
