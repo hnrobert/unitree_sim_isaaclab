@@ -170,15 +170,33 @@ def _view_camera_cfg(cam_cfg):
 
 
 def _set_viewport_camera(prim_path: str = "/World/PerspectiveCamera") -> None:
-    """Look through the overview camera in the GUI viewport (if both exist)."""
-    try:
-        import omni.usd
-        from omni.kit.viewport.utility import get_active_viewport
+    """Look through the given camera in EVERY GUI viewport.
 
-        viewport = get_active_viewport()
-        if viewport is not None and omni.usd.get_context().get_stage().GetPrimAtPath(prim_path).IsValid():
-            viewport.camera_path = prim_path
-            print(f"[camera] viewport camera: {prim_path}")
+    A kit boot can open more than one viewport window; setting only
+    the "active" one leaves the other showing an empty stage - and
+    that empty window usually stacks ON TOP (the gray screen)."""
+    try:
+        import omni.kit.viewport.utility as vp_util
+        set_count = 0
+        try:
+            names = vp_util.get_viewport_window_names()
+        except Exception:
+            names = [None]
+        for name in names:
+            try:
+                vp = (vp_util.get_viewport_from_window_name(name)
+                      if name else vp_util.get_active_viewport())
+                if vp is not None:
+                    vp.camera_path = prim_path
+                    set_count += 1
+            except Exception:
+                continue
+        if set_count == 0:
+            vp = vp_util.get_active_viewport()
+            if vp is not None:
+                vp.camera_path = prim_path
+                set_count = 1
+        print(f"[camera] viewport camera set on {set_count} viewport(s): {prim_path}")
     except Exception as e:
         print(f"[camera] could not set the viewport camera: {e}")
 
@@ -471,6 +489,38 @@ def main(env_cfg):
     except Exception as e:
         print(f"[unibot] item material dressing skipped: {e}")
 
+    # unibot warehouse: FORCE the overview camera pose on the prim
+    # itself (cfg-conversion paths proved unreliable; this is ground
+    # truth) - eye (0,-11,22) looking north, 55.7 deg down
+    try:
+        import omni.usd as _ou_w
+        from pxr import Gf, UsdGeom as _UG_w
+        _st_w = _ou_w.get_context().get_stage()
+        _cp_w = _st_w.GetPrimAtPath("/World/PerspectiveCamera")
+        if _cp_w.IsValid():
+            _xf_w = _UG_w.Xformable(_cp_w)
+            # the prim carries FLOAT-precision ops already - reuse them
+            # (adding Quatd ops on top throws a precision mismatch)
+            def _set_any(op, vals):
+                for v in vals:  # precision lottery: try each type
+                    try:
+                        op.Set(v)
+                        return True
+                    except Exception:
+                        continue
+                return False
+            _t_w = _xf_w.GetTranslateOp() or _xf_w.AddTranslateOp()
+            _ok_t = _set_any(_t_w, [Gf.Vec3d(0.0, -11.0, 22.0), Gf.Vec3f(0.0, -11.0, 22.0)])
+            _o_w = _xf_w.GetOrientOp() or _xf_w.AddOrientOp()
+            _ok_o = _set_any(_o_w, [
+                Gf.Quatf(0.95557, Gf.Vec3f(0.29476, 0.0, 0.0)),
+                Gf.Quatd(0.95557, Gf.Vec3d(0.29476, 0.0, 0.0))])
+            print(f"[unibot] overview camera forced at (0,-11,22) t={_ok_t} o={_ok_o}")
+        else:
+            print("[unibot] overview camera prim MISSING")
+    except Exception as e:
+        print(f"[unibot] overview camera force failed: {e}")
+
     # unibot warehouse: publish the overhead camera as a ZMQ JPEG
     # stream (tcp://*:55561) for the host-side recorder.
     # THREAD RULE: this thread only SENDS. Reading camera sensor data
@@ -508,13 +558,23 @@ def main(env_cfg):
         _viewport_cap = {"ann": None}
 
         def _unibot_viewport_grab():
+            # the extra 1920x1080 render product costs real frame rate;
+            # only record runs pay for it (run.sh sets UNIBOT_RECORD=1)
+            import os as _os_v
+            if _os_v.environ.get("UNIBOT_RECORD") != "1":
+                return
             try:
                 if _viewport_cap["ann"] is None:
                     import omni.replicator.core as _rep_v
                     import omni.usd as _ou_v
-                    _cam_v = "/World/FollowCamera"
-                    if not _ou_v.get_context().get_stage().GetPrimAtPath(_cam_v).IsValid():
-                        _cam_v = "/World/PerspectiveCamera"
+                    # match what the GUI viewport looks through; a
+                    # 1920x1080 render product is NOT free - it is
+                    # created only when recording is on
+                    _cam_v = "/World/PerspectiveCamera"
+                    if getattr(args_cli, "view_camera", "auto") not in ("world",) \
+                            and _ou_v.get_context().get_stage() \
+                            .GetPrimAtPath("/World/FollowCamera").IsValid():
+                        _cam_v = "/World/FollowCamera"
                     _rp_v = _rep_v.create.render_product(_cam_v, (1920, 1080))
                     _ann_v = _rep_v.AnnotatorRegistry.get_annotator("rgb")
                     _ann_v.attach(_rp_v)

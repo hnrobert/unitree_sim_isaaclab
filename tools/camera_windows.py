@@ -29,6 +29,7 @@ WINDOWS = (
     ("wrist left", 55556, None),
     ("wrist right", 55557, None),
 )
+OVERHEAD_PORT = 55561
 
 
 def _subscribe(ctx, port):
@@ -46,6 +47,8 @@ def main() -> None:
     ap.add_argument("--scale", type=float, default=1.0, help="extra window scale")
     ap.add_argument("--grid", action="store_true",
                     help="single 2x2 grid window instead of four windows")
+    ap.add_argument("--overhead", action="store_true",
+                    help="ONE window with the top-down overhead view")
     args = ap.parse_args()
 
     ctx = zmq.Context()
@@ -54,6 +57,29 @@ def main() -> None:
     for title, port, _half in WINDOWS:
         if port not in subs:
             subs[port] = _subscribe(ctx, port)
+
+    if args.overhead:
+        subs = {OVERHEAD_PORT: _subscribe(ctx, OVERHEAD_PORT)}
+        cv2.namedWindow("overhead", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("overhead", 960, 720)
+        cv2.moveWindow("overhead", 80, 80)
+        import numpy as _np_o
+        frame = {"f": None}
+        while True:
+            try:
+                data = subs[OVERHEAD_PORT].recv(flags=zmq.NOBLOCK)
+                img = cv2.imdecode(_np_o.frombuffer(data, _np_o.uint8), cv2.IMREAD_COLOR)
+                if img is not None:
+                    frame["f"] = img
+            except zmq.Again:
+                pass
+            if frame["f"] is not None:
+                cv2.imshow("overhead", frame["f"])
+            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                break
+            time.sleep(0.033)
+        cv2.destroyAllWindows()
+        return
 
     w = int(args.width * args.scale)
     h = int(w * 480 / 640)

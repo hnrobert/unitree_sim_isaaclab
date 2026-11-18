@@ -197,7 +197,7 @@ class UnibotWarehouseSceneCfg(InteractiveSceneCfg):
     from isaaclab.sensors import CameraCfg
     overhead_camera = CameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/Geometry/AGV_link/overhead_cam",
-        update_period=0.05, height=960, width=1280, data_types=["rgb"],
+        update_period=0.066, height=720, width=960, data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=18.0, horizontal_aperture=20.955, clipping_range=(0.05, 1.0e5)),
         offset=CameraCfg.OffsetCfg(
@@ -205,11 +205,17 @@ class UnibotWarehouseSceneCfg(InteractiveSceneCfg):
             convention="opengl"),
     )
 
+    # FIXED whole-hall overview (no auto-follow): INSIDE the hall
+    # (walls at |y|=15 block an outside eye - an outside camera sees
+    # only gray wall backs), high over the south aisle, tilted ~53deg
+    # down at the hall center; wide lens frames the full 48x30 floor
     world_camera = CameraBaseCfg.get_camera_config(
         prim_path="/World/PerspectiveCamera",
-        pos_offset=(-8.6, 3.6, 1.6),
-        rot_offset=(0.00617, 0.70708, -0.70708, -0.00617),
-        focal_length=16.5)
+        pos_offset=(0.0, -11.0, 22.0),
+        # ros-convention quat (the preset's OffsetCfg convention="ros"):
+        # look NORTH and 55.7 deg down at the hall center
+        rot_offset=(-0.3304, 0.3304, 0.62517, 0.62517),
+        focal_length=11.0)
 
 
 # ---- challenge-task tabletop dressing (unibot_task_layout.yaml) --------
