@@ -154,6 +154,16 @@ class NavDriver:
     def zero(self):
         self.cmd.Write(self._twist(0.0, 0.0))
 
+    def hold(self, seconds):
+        """Standstill that KEEPS SENDING zeros: the merged sysid cmd
+        timeout is 0.3 s - a silent sleep longer than that reads as
+        'controller gone' on the sim side and trips the idle-park
+        teleport (the tug-of-war that looked like endless spinning)."""
+        t0 = time.time()
+        while time.time() - t0 < seconds:
+            self.zero()
+            time.sleep(0.05)
+
     def send(self, v, w):
         self._last_w = w
         self.cmd.Write(self._twist(v, w))
@@ -202,8 +212,10 @@ class NavDriver:
             # tol + |w| * lead so the coast lands IN the tolerance
             if abs(err) < tol + abs(self._last_w) * STOP_LEAD_S:
                 self.zero()
-                # odom lags the motion - settle and RE-CHECK once
-                time.sleep(0.4)
+                # odom lags the motion - settle and RE-CHECK once, but
+                # KEEP THE CMD ALIVE (hold, not sleep): silence > 0.3 s
+                # trips the sim-side idle-park teleport
+                self.hold(0.4)
                 if abs(wrap(yaw - self.pose()[2])) < tol + 0.04:
                     self.zero()
                     return True
@@ -412,7 +424,7 @@ def patrol(d, which="all", rounds=1):
                 d.send(-0.20, 0.0)
                 time.sleep(0.05)
             d.zero()
-            time.sleep(0.3)
+            d.hold(0.3)  # keep the cmd fresh through the pause
         cx, cy, cyaw = d.pose()
         rep.add(tag, x, y, yd, cx - x, cy - y,
                 math.degrees(wrap(math.radians(yd) - cyaw)), result, time.time() - t0)

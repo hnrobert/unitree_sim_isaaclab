@@ -159,6 +159,7 @@ class G1DDDSActionProvider(ActionProvider):
         self._angular = AxisResponseSim(sysid.angular, self._dt)
         self._lift_speed = AxisResponseSim(sysid.lift, self._dt)
         self._state_delay = DelayLine(sysid.odom_latency, self._dt)
+        self._last_cmd_time = 0.0  # wall clock of the last fresh cmd_vel (idle-park arm)
         self._stall_time, self._stall_dir = 0.0, 0  # column stall protection
         if self._torque_hands:
             self._torque_hands.reset()
@@ -199,14 +200,17 @@ class G1DDDSActionProvider(ActionProvider):
             self._targets[i] = self._lift_height / len(self._lift_ids)
 
     def _idle_park(self, now):
-        """Idle drift guard: with no cmd_vel for >3 s and the base more
-        than 0.25 m from its spawn, teleport it back (single pose
+        """Idle drift guard: with NO cmd_vel for >3 s (a real idle period,
+        not the 0.3 s sysid cmd timeout - a controller that keeps a 0.4 s
+        settle pause mid-maneuver must NOT be parked; that tug-of-war
+        looked like the robot endlessly spinning in place) and the base
+        more than 0.25 m from its spawn, teleport it back (single pose
         write + zero velocity - the every-step write pattern diverged,
         a one-shot park is the demo's proven hard-park). The warmup
         free-roll left the robot nose-deep in tables otherwise."""
         if now - getattr(self, "_last_park", 0.0) < 5.0:
             return
-        if self._home_pos is None:
+        if self._home_pos is None or now - getattr(self, "_last_cmd_time", 0.0) < 3.0:
             return
         pose = self.robot.data.root_link_pose_w.torch[0]
         dx, dy = float(pose[0]) - self._home_pos[0], float(pose[1]) - self._home_pos[1]
@@ -240,6 +244,7 @@ class G1DDDSActionProvider(ActionProvider):
         v = w = 0.0
         _has_cmd = bool(cmd and now - cmd.get("move_stamp", 0.0) < self.SYSID.cmd_timeout)
         if _has_cmd:
+            self._last_cmd_time = now  # idle-park arm: a REAL idle period, not the cmd timeout
             v, w = float(cmd.get("lin_x", 0.0)), float(cmd.get("ang_z", 0.0))
         else:
             self._idle_park(now)
