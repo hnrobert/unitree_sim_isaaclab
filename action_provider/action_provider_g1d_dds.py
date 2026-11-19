@@ -236,6 +236,15 @@ class G1DDDSActionProvider(ActionProvider):
         except Exception as e:
             print(f"[{self.name}] idle-park failed: {e}")
 
+    # idle yaw-hold: with NO cmd_vel the velocity write zeroes wz every step,
+    # yet solver-injected contact torques (arm self-collision contacts on the
+    # hovering base, asymmetric arm poses) still integrate ~0.2 deg/s of yaw
+    # drift - the "base slowly rotates left after startup". Closed at the
+    # VELOCITY level (per-step POSE writes fight the solver and diverge).
+    YAW_HOLD_KP = 1.5          # rad/s per rad of yaw error
+    YAW_HOLD_MAX = 0.10        # rad/s correction cap (gentle)
+    YAW_HOLD_DEADBAND = 0.01   # rad (~0.6 deg): inside it no correction
+
     def _apply_base(self, cmd, now):
         """Drive the base with the rt/cmd_vel_no_limit twist (stock
         root-VELOCITY write). Contact lockups are prevented OUTSIDE
@@ -248,6 +257,14 @@ class G1DDDSActionProvider(ActionProvider):
             v, w = float(cmd.get("lin_x", 0.0)), float(cmd.get("ang_z", 0.0))
         else:
             self._idle_park(now)
+            # a FRESH zero command means a controller is managing the base
+            # (nav hold()) - only a truly silent bus gets the yaw hold
+            yaw = _yaw_of(self.robot.data.root_link_pose_w.torch[0][3:7])
+            yaw_err = math.atan2(math.sin(yaw - self._home_yaw),
+                                 math.cos(yaw - self._home_yaw))
+            if abs(yaw_err) > self.YAW_HOLD_DEADBAND:
+                w = max(-self.YAW_HOLD_MAX,
+                        min(self.YAW_HOLD_MAX, -self.YAW_HOLD_KP * yaw_err))
         v, w = self._linear.step(v), self._angular.step(w)
         pose = self.robot.data.root_link_pose_w.torch[0]
         z = float(pose[2])

@@ -124,6 +124,14 @@ def _g1d_cfg(asset: str, hand_joint_pos: dict, hand_actuators: dict) -> Articula
                 max_depenetration_velocity=1.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                # MUST stay False (upstream default, like R1-A7-D / R1-7A):
+                # the Dex1 finger blades are SIBLING links with overlapping
+                # geometry at spawn - with self-collisions on they interlock
+                # and the grippers FREEZE (no close command ever moves them;
+                # proven by tools/dex1_pick_test.py dbgB). Body-vs-arm
+                # safety is enforced one layer up instead: the pose planner's
+                # workspace screen (t20_server._tcp_safe + null-space elbow
+                # posture), NOT physics.
                 enabled_self_collisions=False,
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=4,

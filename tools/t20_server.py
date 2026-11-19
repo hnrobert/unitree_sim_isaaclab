@@ -138,6 +138,89 @@ def _stream_joints(side, q_targets, v_rad_s=0.4):
 Z_FLOOR = -0.01  # tcp height floor: below this the hand plows the tabletop
                  # (observed: VLM descents to z -0.02..-0.05 tipped every cup)
 
+# TCP workspace bounds (torso frame) - the collision safety layer of the
+# pose planner: every path WAYPOINT must pass _tcp_safe before it is
+# executed. Keeps the hand out of the torso volume, behind the body and
+# below the tabletop; joint-level self-collision remains PhysX-guarded
+# (enabled_self_collisions=True in robots/unitree_g1d.py).
+TCP_BOUNDS = ((-0.05, 0.55), (-0.45, 0.45), (Z_FLOOR, 0.60))  # x, y, z
+TORSO_XY_EXCLUDE = (0.10, 0.20)  # x < 0.10 AND |y| < 0.20 = inside the torso
+
+
+def _tcp_safe(p) -> str | None:
+    """None if the waypoint is in the safe workspace, else the reason."""
+    for v, (lo, hi) in zip(p, TCP_BOUNDS):
+        if not lo <= v <= hi:
+            return f"{v:+.2f} outside the workspace [{lo}..{hi}]"
+    if p[0] < TORSO_XY_EXCLUDE[0] and abs(p[1]) < TORSO_XY_EXCLUDE[1]:
+        return f"inside the torso volume (x {p[0]:+.2f}, y {p[1]:+.2f})"
+    return None
+
+
+def _rpy_to_R(roll, pitch, yaw):
+    """Rotation matrix from torso-frame RPY (Rz(yaw) @ Ry(pitch) @ Rx(roll))."""
+    cr, sr = math.cos(roll), math.sin(roll)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+    Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+    Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+    return Rz @ Ry @ Rx
+
+
+def _R_to_rpy(R):
+    """Current orientation as (roll, pitch, yaw) matching _rpy_to_R."""
+    pitch = math.atan2(-R[2, 0], math.hypot(R[0, 0], R[1, 0]))
+    roll = math.atan2(R[2, 1], R[2, 2])
+    yaw = math.atan2(R[1, 0], R[0, 0])
+    return roll, pitch, yaw
+
+
+def op_set_ee_pose(side, x, y, z, roll=None, pitch=None, yaw=None, speed=0.5):
+    """Plan and execute ONE absolute gripper-pose command.
+
+    The MODEL only states the goal pose; the motion itself is planned here:
+    a straight TCP path resampled into <= 4 cm waypoints, every waypoint
+    checked against the safe workspace (no torso, no below-table, no
+    behind-body), solved by the OFFICIAL arm_ik (null-space pulled toward
+    the home posture so the elbow never swings into the body) and executed
+    joint-interpolated at a bounded speed. Optional roll/pitch/yaw reorient
+    the wrist (absolute, torso frame; omitted values keep the current
+    orientation) - e.g. pitch about +pi to invert a cup."""
+    q = _arm_q(side)
+    if q is None:
+        return "error: no rt/lowstate yet"
+    p0, R0 = KIN[side].fk(q)
+    tgt = np.array([float(x), float(y), float(z)])
+    why = _tcp_safe(tgt)
+    if why:
+        return f"error: target ({tgt[0]:+.2f},{tgt[1]:+.2f},{tgt[2]:+.2f}) rejected - {why}"
+    r0, p0r, y0 = _R_to_rpy(R0)
+    R = _rpy_to_R(r0 if roll is None else float(roll),
+                  p0r if pitch is None else float(pitch),
+                  y0 if yaw is None else float(yaw))
+    dist = float(np.linalg.norm(tgt - p0))
+    n_wp = max(1, int(math.ceil(dist / 0.04)))
+    q_prev = q
+    for i in range(1, n_wp + 1):
+        pi = p0 + (tgt - p0) * (i / n_wp)
+        why = _tcp_safe(pi)
+        if why:
+            return (f"aborted at waypoint {i}/{n_wp} ({pi[0]:+.2f},{pi[1]:+.2f},{pi[2]:+.2f}) "
+                    f"- path is unsafe: {why}; arm left at the last safe pose")
+        q_i, ep, er = KIN[side].ik(pi, R, q_prev, q_rest=_home_q(side), iters=40)
+        if ep > 0.012:  # seed stuck in a local minimum - retry from home
+            q_i, ep, er = KIN[side].ik(pi, R, _home_q(side), q_rest=_home_q(side), iters=60)
+        if ep > 0.012:
+            return (f"aborted at waypoint {i}/{n_wp}: unreachable (pos err {ep:.3f} m) "
+                    f"- try a closer target or change the lift")
+        _stream_joints(side, list(q_i), v_rad_s=max(0.3, min(0.8, float(speed))))
+        q_prev = q_i
+    p1, _ = KIN[side].fk(q_prev)
+    return (f"{side} tcp at ({p1[0]:+.3f},{p1[1]:+.3f},{p1[2]:+.3f}) [{FRAME_HELP}] "
+            f"(planned {n_wp} waypoints over {dist:.2f} m, collision-checked); "
+            f"requested ({x:+.2f},{y:+.2f},{z:+.2f})")
+
 
 def op_move_ee(side, dx, dy, dz, speed=0.4):
     q = _arm_q(side)
@@ -145,8 +228,10 @@ def op_move_ee(side, dx, dy, dz, speed=0.4):
         return "error: no rt/lowstate yet"
     p, R = KIN[side].fk(q)
     tgt = p + np.array([dx, dy, dz], dtype=float)
-    clamped = tgt[2] < Z_FLOOR
-    tgt[2] = max(tgt[2], Z_FLOOR)  # never drive the hand through the table
+    why = _tcp_safe(tgt)
+    if why:
+        return (f"error: target ({tgt[0]:+.3f},{tgt[1]:+.3f},{tgt[2]:+.3f}) "
+                f"rejected - {why}; the move is NOT executed")
     v = max(0.03, min(0.4, float(speed)))  # rad/s joint speed
     q_new, ep, er = KIN[side].ik(tgt, R, q, q_rest=_home_q(side))
     if ep > 0.012:
@@ -154,10 +239,9 @@ def op_move_ee(side, dx, dy, dz, speed=0.4):
                 f"unreachable (pos err {ep:.3f} m) - move closer / use the lift")
     _stream_joints(side, list(q_new), v_rad_s=v)
     p2, _ = KIN[side].fk(_arm_q(side) or q_new)
-    note = " [z CLAMPED at the tabletop floor - you were driving into the table, reassess]" if clamped else ""
     return (f"moved {side} tcp -> ({p2[0]:+.3f},{p2[1]:+.3f},{p2[2]:+.3f}) "
             f"[{FRAME_HELP}]; requested d=({dx:+.3f},{dy:+.3f},{dz:+.3f}) "
-            f"at {v:.2f} rad/s{note}")
+            f"at {v:.2f} rad/s")
 
 
 # grippers: own publishers for BOTH sides (Bridge ships right only)
@@ -238,26 +322,36 @@ def op_state():
 
 # ---- MCP tools ----------------------------------------------------------------
 TOOLS = [
-    {"name": "get_views", "description": "The 4 challenge camera views: head_left, head_right, "
-                                         "wrist_left, wrist_right (head stereo + wrists).",
+    {"name": "get_views", "description": "The 5 camera views: main (close over-the-shoulder of the "
+                                         "table workspace - judge the global scene from it), "
+                                         "head_left, head_right, wrist_left, wrist_right.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "get_state", "description": f"Arm TCP poses + joints ({FRAME_HELP}), lift height.",
+    {"name": "get_state", "description": f"Arm TCP poses + joints ({FRAME_HELP}), lift height. "
+                                         f"Use the tcp_xyz values to plan set_ee_pose targets.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "move_ee", "description": f"Move one gripper's tool point by a RELATIVE offset "
-                                       f"({FRAME_HELP}). Keeps the current orientation. Errors if "
-                                       f"unreachable (adjust or use set_lift). Optional speed = "
-                                       f"joint speed in rad/s (0.03..0.4, default 0.4): pass "
-                                       f"~0.08 for a slow, careful extension or descent near the "
-                                       f"cups - ONE slow command beats a chain of small steps.",
+    {"name": "set_ee_pose", "description": f"PRIMARY motion tool: send one gripper to an ABSOLUTE "
+        f"pose ({FRAME_HELP}). The arm motion is planned and collision-checked on this side "
+        f"(straight TCP path, waypoint safety screen - no torso / below-table / behind-body, "
+        f"bounded joint speed) - BIG steps of 0.1-0.3 m in ONE command are safe and encouraged. "
+        f"Optional roll/pitch/yaw (radians, absolute, omitted axes keep the current orientation) "
+        f"reorient the wrist - e.g. pitch about +3.1 flips the gripper to point straight down "
+        f"(invert a held cup). Plan targets from get_state's tcp_xyz.",
+     "inputSchema": {"type": "object", "required": ["side", "x", "y", "z"],
+                     "properties": {"side": {"type": "string", "enum": ["left", "right"]},
+                                    "x": {"type": "number"}, "y": {"type": "number"},
+                                    "z": {"type": "number"},
+                                    "roll": {"type": "number"}, "pitch": {"type": "number"},
+                                    "yaw": {"type": "number"},
+                                    "speed": {"type": "number"}}}},
+    {"name": "move_ee", "description": f"Fine adjustment: move one gripper's tool point by a small "
+                                       f"RELATIVE offset (<= 5 cm, {FRAME_HELP}), keeping the "
+                                       f"orientation. Same collision screen as set_ee_pose; for "
+                                       f"larger moves prefer set_ee_pose (one planned command).",
      "inputSchema": {"type": "object", "required": ["side", "dx", "dy", "dz"],
                      "properties": {"side": {"type": "string", "enum": ["left", "right"]},
                                     "dx": {"type": "number"}, "dy": {"type": "number"},
                                     "dz": {"type": "number"},
                                     "speed": {"type": "number"}}}},
-    {"name": "move_joints", "description": "Absolute 7-joint target (rad, shoulder_pitch..wrist_yaw order).",
-     "inputSchema": {"type": "object", "required": ["side", "q"],
-                     "properties": {"side": {"type": "string", "enum": ["left", "right"]},
-                                    "q": {"type": "array", "items": {"type": "number"}, "minItems": 7, "maxItems": 7}}}},
     {"name": "set_gripper", "description": "open01: 1 = fully open, 0 = closed.",
      "inputSchema": {"type": "object", "required": ["side", "open"],
                      "properties": {"side": {"type": "string", "enum": ["left", "right"]},
@@ -294,10 +388,18 @@ def call_tool(name, args):
         return {"content": content or [{"type": "text", "text": "no frames yet"}]}
     if name == "get_state":
         return {"content": [{"type": "text", "text": op_state()}]}
+    if name == "set_ee_pose":
+        return {"content": [{"type": "text", "text": op_set_ee_pose(
+            args["side"], args["x"], args["y"], args["z"],
+            args.get("roll"), args.get("pitch"), args.get("yaw"),
+            args.get("speed", 0.5))}]}
     if name == "move_ee":
         return {"content": [{"type": "text", "text": op_move_ee(
             args["side"], args["dx"], args["dy"], args["dz"], args.get("speed", 0.4))}]}
     if name == "move_joints":
+        # not in TOOLS (the model plans in gripper-pose space now), but
+        # the MCP endpoint also serves the ACT runner, which legitimately
+        # streams joint targets (its own layer clamps to joint limits)
         _stream_joints(args["side"], [float(x) for x in args["q"]])
         return {"content": [{"type": "text", "text": op_state()}]}
     if name == "set_gripper":
@@ -352,7 +454,17 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     global BRIDGE, GRIP, LIFT
     BRIDGE = Bridge(domain=1)
-    BRIDGE.wait_for_sim()
+    # the launcher starts this server the moment the camera streams answer,
+    # which can be BEFORE the sim's DDS provider publishes rt/lowstate -
+    # wait patiently instead of dying in that window
+    for _ in range(120):
+        try:
+            BRIDGE.wait_for_sim(timeout=2.0)
+            break
+        except SystemExit:
+            time.sleep(1.0)
+    else:
+        raise SystemExit("no rt/lowstate after 4 min - is the sim running?")
     GRIP = Grippers()
     LIFT = Lift()
     # grippers OPEN from the start: the demos (and the ACT pre-pose) begin
