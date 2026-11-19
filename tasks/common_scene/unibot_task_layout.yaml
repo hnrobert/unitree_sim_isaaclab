@@ -43,9 +43,13 @@ tables:
   table_03:
     task: T20 纸杯堆叠
     items:
-      - { type: cup, at: [-0.11, -0.08], color: [0.82, 0.66, 0.45] }
-      - { type: cup, at: [0.09, -0.17], color: [0.82, 0.66, 0.45] }
-      - { type: cup, at: [0.02, 0.07], color: [0.82, 0.66, 0.45] }
+      # near-edge row (robot side = local -y, edge at ly -0.45): cups
+      # at 0.36-0.49 m torso-forward - inside the ~0.35 m tcp comfort
+      # zone measured in the driver runs; left/right split for both
+      # arms, center-back one doubles as the stacking target
+      - { type: cup, at: [-0.24, -0.28], color: [0.82, 0.66, 0.45] }
+      - { type: cup, at: [0.26, -0.29], color: [0.82, 0.66, 0.45] }
+      - { type: cup, at: [0.00, -0.26], color: [0.82, 0.66, 0.45] }
   table_04:
     task: T08 整理书架
     items:

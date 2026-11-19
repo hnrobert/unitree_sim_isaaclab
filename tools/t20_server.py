@@ -104,7 +104,14 @@ def _home_q(side):
 
 
 def _stream_joints(side, q_targets, v_rad_s=0.4):
-    """Interpolate the arm to q_targets (arm_ik name order) on the Bridge stream."""
+    """Interpolate the arm to q_targets (arm_ik name order) on the Bridge stream.
+
+    Targets are CLAMPED to the URDF joint limits first: VLM / policy outputs
+    can leave the valid range (an early ACT checkpoint produced out-of-limit
+    targets and the arm twisted toward them)."""
+    kin = KIN[side]
+    q_targets = [max(lo, min(hi, q)) for q, lo, hi in
+                 zip(q_targets, kin.lower, kin.upper)]
     names = KIN[side].names
     slots = [ARM_MOTOR[n] for n in names]
     q0 = _arm_q(side) or _home_q(side)
@@ -325,6 +332,11 @@ def main():
     BRIDGE.wait_for_sim()
     GRIP = Grippers()
     LIFT = Lift()
+    # grippers OPEN from the start: the demos (and the ACT pre-pose) begin
+    # with open grippers, and any earlier close command lingering on the
+    # wire must not survive (motor q: 0 closed .. 5.4 open)
+    for side in ("left", "right"):
+        GRIP.set(side, 5.4 / 5.4)
     threading.Thread(target=_cam_worker, daemon=True).start()
     srv = ThreadingHTTPServer(("0.0.0.0", MCP_PORT), Handler)
     print(f"[t20] MCP endpoint http://0.0.0.0:{MCP_PORT}/mcp - tools: "

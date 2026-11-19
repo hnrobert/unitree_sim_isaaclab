@@ -100,11 +100,16 @@ class Bridge:
             except TypeError:  # idl dataclass needs every field
                 # NOTE the HG LowCmd slots are unitree_hg MotorCmd (its
                 # reserve is a SCALAR) - the unitree_go MotorCmd's list
-                # reserve breaks the CRC struct pack
+                # reserve breaks the CRC struct pack.
+                # kp=0 = slot DISABLED. Motors 31/33 are the INTERNAL Dex1
+                # gripper slots (q 0 closed .. 5.4 open): the sim provider
+                # applies any enabled slot, so leaving kp>0 there drove the
+                # grippers CLOSED at startup (the "grips close on boot"
+                # bug). Only motors 0..28 (body + arms) get enabled below.
                 msg = hg.LowCmd_(
                     mode_pr=0, mode_machine=self.mode_machine,
-                    motor_cmd=[hg.MotorCmd_(mode=1, q=0.0, dq=0.0, tau=0.0,
-                                            kp=60.0, kd=1.5, reserve=0)
+                    motor_cmd=[hg.MotorCmd_(mode=0, q=0.0, dq=0.0, tau=0.0,
+                                            kp=0.0, kd=0.0, reserve=0)
                                for _ in range(35)],
                     reserve=[0, 0, 0, 0], crc=0)  # uint32[4] fixed
             msg.mode_pr = 0

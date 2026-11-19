@@ -63,9 +63,10 @@ parser.add_argument("--image_server_in_process", action="store_true", default=Fa
                     help="run the image server in the simulator process (old behaviour). Default: own process, so its "
                          "image encoding does not compete with the simulation for the Python GIL")
 parser.add_argument("--view_camera", type=str, default="auto", choices=["auto", "world", "follow", "none"],
-                    help="viewport camera at start-up (GUI): world = fixed overview camera (/World/PerspectiveCamera), "
-                         "follow = chase camera behind the robot (/World/FollowCamera), auto = follow for mobile robots "
-                         "(G1-D, R1-A7-D, Wholebody tasks) else world. Both can also be selected in the viewport camera menu")
+                    help="viewport camera at start-up (GUI), always the kit FREE camera (/OmniverseKit_Persp): "
+                         "world = one-shot overview framing, follow = chase view behind the robot, auto = follow "
+                         "for mobile robots (G1-D, R1-A7-D, Wholebody tasks) else world. The free camera stays "
+                         "user-draggable in every mode")
 parser.add_argument("--render_sync", action="store_true", default=False,
                     help="wait for the GPU at every render (Isaac Lab default for synthetic data). Off: camera images may be "
                          "one frame (<= 1/render_fps) old, but rendering is much faster")
@@ -170,12 +171,18 @@ def _view_camera_cfg(cam_cfg):
     )
 
 
-def _set_viewport_camera(prim_path: str = "/World/PerspectiveCamera") -> None:
+def _set_viewport_camera(prim_path: str = "/OmniverseKit_Persp") -> None:
     """Look through the given camera in EVERY GUI viewport.
 
     A kit boot can open more than one viewport window; setting only
     the "active" one leaves the other showing an empty stage - and
-    that empty window usually stacks ON TOP (the gray screen)."""
+    that empty window usually stacks ON TOP (the gray screen).
+
+    Default target is the kit FREE camera (/OmniverseKit_Persp,
+    session layer): binding a SCENE prim here (e.g. /World/
+    PerspectiveCamera) locks viewport navigation in Isaac Sim 6.2 -
+    mouse drags write nothing at all. Startup framing is pushed
+    onto the free camera instead (the overview block below)."""
     try:
         import omni.kit.viewport.utility as vp_util
         set_count = 0
@@ -345,6 +352,7 @@ def main(env_cfg):
             print(f"[sim] failed to list sensors: {e}")
         print(f"\ncreate environment success ...")
         follow_camera = None
+        view = args_cli.view_camera  # resolved to follow/world below
         if not args_cli.no_render:
             try:
                 from tools.follow_camera import FollowCamera
@@ -352,7 +360,6 @@ def main(env_cfg):
                 follow_camera = FollowCamera(env)
             except Exception as e:
                 print(f"[camera] follow camera not available: {e}")
-            view = args_cli.view_camera
             if view == "auto":
                 mobile = args_cli.robot_type in ("g1d", "r1a7d") or "Wholebody" in args_cli.task
                 view = "follow" if (mobile and follow_camera is not None) else "world"
@@ -490,37 +497,57 @@ def main(env_cfg):
     except Exception as e:
         print(f"[unibot] item material dressing skipped: {e}")
 
-    # unibot warehouse: FORCE the overview camera pose on the prim
-    # itself (cfg-conversion paths proved unreliable; this is ground
-    # truth) - eye (0,-11,22) looking north, 55.7 deg down
-    try:
-        import omni.usd as _ou_w
-        from pxr import Gf, UsdGeom as _UG_w
-        _st_w = _ou_w.get_context().get_stage()
-        _cp_w = _st_w.GetPrimAtPath("/World/PerspectiveCamera")
-        if _cp_w.IsValid():
-            _xf_w = _UG_w.Xformable(_cp_w)
-            # the prim carries FLOAT-precision ops already - reuse them
-            # (adding Quatd ops on top throws a precision mismatch)
-            def _set_any(op, vals):
-                for v in vals:  # precision lottery: try each type
-                    try:
-                        op.Set(v)
-                        return True
-                    except Exception:
-                        continue
-                return False
-            _t_w = _xf_w.GetTranslateOp() or _xf_w.AddTranslateOp()
-            _ok_t = _set_any(_t_w, [Gf.Vec3d(-14.0, -9.0, 12.0), Gf.Vec3f(-14.0, -9.0, 12.0)])
-            _o_w = _xf_w.GetOrientOp() or _xf_w.AddOrientOp()
-            _ok_o = _set_any(_o_w, [
-                Gf.Quatf(0.94027, Gf.Vec3f(0.34043, 0.0, 0.0)),
-                Gf.Quatd(0.94027, Gf.Vec3d(0.34043, 0.0, 0.0))])
-            print(f"[unibot] overview camera forced at (-14,-9,12) t={_ok_t} o={_ok_o}")
-        else:
-            print("[unibot] overview camera prim MISSING")
-    except Exception as e:
-        print(f"[unibot] overview camera force failed: {e}")
+    # unibot warehouse: push the OVERVIEW framing onto the kit free
+    # camera (/OmniverseKit_Persp, session layer) - the only camera
+    # the viewport navigation is guaranteed to edit. A scene prim
+    # (the old /World/PerspectiveCamera target) accepts the write but
+    # LOCKS viewport dragging - drags then produce no camera writes
+    # at all. world view only: in follow mode the chase writer owns
+    # the free camera and a second framing here would read as a user
+    # edit and pause it. One-shot; afterwards the camera is the
+    # user's. eye (-14,-9,12) looking north, 55.7 deg down.
+    if view == "world":
+        try:
+            import omni.usd as _ou_w
+            from pxr import Gf, Usd, UsdGeom as _UG_w
+
+            # framing: default = whole-hall overview (south, 55.7 deg down);
+            # UNIBOT_VIEW="px,py,pz,tx,ty,tz" overrides with a pos + look-at
+            # target pair (e.g. run_T20.sh: a close over-the-shoulder view of
+            # the robot's table workspace). Orientation quaternion is derived
+            # from the direction (USD cameras look along local -z, up = +y):
+            #   pitch p = acos(-dz), yaw = atan2(-dx, dy); q = qz(yaw) * qx(p)
+            _vp_w = (-14.0, -9.0, 12.0)
+            _vq_w = Gf.Quatd(0.94027, Gf.Vec3d(0.34043, 0.0, 0.0))
+            _env_v = os.environ.get("UNIBOT_VIEW", "").split(",")
+            if len(_env_v) == 6:
+                _px_, _py_, _pz_, _tx_, _ty_, _tz_ = (float(v) for v in _env_v)
+                _dx_, _dy_, _dz_ = _tx_ - _px_, _ty_ - _py_, _tz_ - _pz_
+                _n_ = math.sqrt(_dx_ * _dx_ + _dy_ * _dy_ + _dz_ * _dz_) or 1.0
+                _dx_, _dy_, _dz_ = _dx_ / _n_, _dy_ / _n_, _dz_ / _n_
+                import math as _m
+                _p_ = _m_.acos(max(-1.0, min(1.0, -_dz_)))
+                _yaw_ = _m_.atan2(-_dx_, _dy_)
+                _hp_, _hy_ = _m_.sin(_p_ / 2.0), _m_.sin(_yaw_ / 2.0)
+                _cp_, _cy_ = _m_.cos(_p_ / 2.0), _m_.cos(_yaw_ / 2.0)
+                # qz(yaw) (x) qx(pitch) in xyzw form
+                _vq_w = Gf.Quatd(_cy_ * _cp_, Gf.Vec3d(_cy_ * _hp_, _hy_ * _hp_, _hy_ * _cp_))
+                _vp_w = (_px_, _py_, _pz_)
+                print(f"[unibot] UNIBOT_VIEW close framing at {_vp_w} -> target "
+                      f"({_tx_}, {_ty_}, {_tz_})")
+
+            _st_w = _ou_w.get_context().get_stage()
+            _FREE_W = "/OmniverseKit_Persp"
+            with Usd.EditContext(_st_w, _st_w.GetSessionLayer()):
+                _cam_w = _UG_w.Camera.Define(_st_w, _FREE_W)
+                _xf_w = _UG_w.Xformable(_cam_w.GetPrim())
+                _op_w = _xf_w.MakeMatrixXform()
+                _m_w = (Gf.Matrix4d().SetRotate(_vq_w)
+                        .SetTranslateOnly(Gf.Vec3d(*_vp_w)))
+                _ok_w = _op_w.Set(_m_w)
+            print(f"[unibot] overview framing pushed onto the free camera: {_ok_w}")
+        except Exception as e:
+            print(f"[unibot] overview camera force failed: {e}")
 
     # unibot: capture the intended spawn pose IMMEDIATELY - the base
     # free-rolls during the long DDS/camera warmup (measured ~1 m,
@@ -573,9 +600,10 @@ def main(env_cfg):
         _th_r.Thread(target=_pub_overhead, daemon=True).start()
 
         # viewport stream: the SAME camera the GUI viewport looks
-        # through (FollowCamera; PerspectiveCamera fallback) rendered
-        # in-window via a RenderProduct + rgb annotator - this is the
-        # "main window" recording source (NOT a screen capture)
+        # through (the kit free camera /OmniverseKit_Persp - overview
+        # or chase, both drive it) rendered in-window via a RenderProduct
+        # + rgb annotator - this is the "main window" recording source
+        # (NOT a screen capture)
         _viewport_box = {"jpeg": None}
         _viewport_cap = {"ann": None}
 
@@ -588,15 +616,10 @@ def main(env_cfg):
             try:
                 if _viewport_cap["ann"] is None:
                     import omni.replicator.core as _rep_v
-                    import omni.usd as _ou_v
-                    # match what the GUI viewport looks through; a
-                    # 1920x1080 render product is NOT free - it is
-                    # created only when recording is on
-                    _cam_v = "/World/PerspectiveCamera"
-                    if getattr(args_cli, "view_camera", "auto") not in ("world",) \
-                            and _ou_v.get_context().get_stage() \
-                            .GetPrimAtPath("/World/FollowCamera").IsValid():
-                        _cam_v = "/World/FollowCamera"
+                    # match what the GUI viewport looks through (free
+                    # camera in every view mode); a 1920x1080 render
+                    # product is NOT free - created only when recording
+                    _cam_v = "/OmniverseKit_Persp"
                     _rp_v = _rep_v.create.render_product(_cam_v, (1920, 1080))
                     _ann_v = _rep_v.AnnotatorRegistry.get_annotator("rgb")
                     _ann_v.attach(_rp_v)
@@ -856,7 +879,10 @@ def main(env_cfg):
 
                 # execute control step (in main thread, support rendering)
                 controller.step()
-                if follow_camera is not None:
+                # chase writer runs in FOLLOW mode only: in world mode
+                # the overview framing owns the free camera and a chase
+                # rewrite would fight the user's drag
+                if follow_camera is not None and view == "follow":
                     follow_camera.update()
                 # one-shot teleport back to the spawn anchor: kills the
                 # warmup free-roll drift (a SINGLE pose write is safe -
@@ -874,14 +900,20 @@ def main(env_cfg):
                         print("[unibot] base re-anchored to spawn")
                     except Exception as _e3:
                         print(f"[unibot] re-anchor failed: {_e3}")
-                # NOTE there is deliberately NO "release the viewport to
-                # the free camera" step: /World/PerspectiveCamera IS the
-                # free camera in Isaac Sim (drag/zoom edits its xform),
-                # and assigning camera_path = "" does NOT switch to it -
+                # NOTE viewport / camera history (three failed attempts
+                # before the current design - keep the traps written
+                # down): (1) binding the viewport to a SCENE prim
+                # (/World/PerspectiveCamera or /World/FollowCamera)
+                # LOCKS navigation - Isaac Sim 6.2 viewport drags only
+                # ever edit the session-layer free camera; (2) assigning
+                # camera_path = "" does NOT release to the free camera -
                 # it detaches the viewport into an empty path = frozen
-                # view that ignores all navigation (the "still can't
-                # adjust the main window view" report). The startup
-                # --view_camera world binding stays as-is, draggable.
+                # view that ignores all navigation; (3) rewriting the
+                # bound prim every step fights the user (snap-back).
+                # Current design: the viewport ALWAYS looks through the
+                # kit free camera /OmniverseKit_Persp; startup framing
+                # (overview or chase) is written to IT once / until the
+                # user drags it (FollowCamera pauses on foreign edits).
                 if _unibot_overhead_grab is not None and loop_count % 2 == 0:
                     _unibot_overhead_grab()  # main thread: PhysX-safe
                 if _unibot_viewport_grab is not None and loop_count % 2 == 0:
