@@ -609,9 +609,14 @@ def main(env_cfg):
 
         def _unibot_viewport_grab():
             # the extra 1920x1080 render product costs real frame rate;
-            # only record runs pay for it (run.sh sets UNIBOT_RECORD=1)
+            # only those who consume the main-view stream pay for it:
+            # recording (run.sh UNIBOT_RECORD=1) or the VLM driver
+            # (run_T20.sh --vlm exports UNIBOT_MAINVIEW=1 so get_views
+            # includes the main camera - the close over-the-shoulder
+            # framing set through UNIBOT_VIEW)
             import os as _os_v
-            if _os_v.environ.get("UNIBOT_RECORD") != "1":
+            if _os_v.environ.get("UNIBOT_RECORD") != "1" \
+                    and _os_v.environ.get("UNIBOT_MAINVIEW") != "1":
                 return
             try:
                 if _viewport_cap["ann"] is None:

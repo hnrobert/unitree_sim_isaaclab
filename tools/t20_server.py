@@ -36,7 +36,13 @@ from arm_ik import ArmKinematics  # noqa: E402  (official solver)
 from moveit_bridge import ARM_MOTOR, Bridge  # noqa: E402 (proven lowcmd stream)
 
 MCP_PORT = 12580
-VIEWS = ("head_left", "head_right", "wrist_left", "wrist_right")
+# "main" = the MAIN WINDOW camera stream (:55562, sim_main viewport grab):
+# whatever framing the GUI viewport shows - for run_T20.sh that is the
+# close over-the-shoulder view of the table workspace (UNIBOT_VIEW).
+# It only streams when the sim runs with UNIBOT_MAINVIEW=1 (--vlm) or
+# UNIBOT_RECORD=1; without it the view is simply absent from get_views.
+VIEWS = ("main", "head_left", "head_right", "wrist_left", "wrist_right")
+MAIN_PORT = 55562
 FRAME_HELP = "torso frame: x = forward (toward the table), y = left, z = up; metres"
 
 # ---- camera grabber (latest-frame CONFLATE subs, like camera_windows) ----
@@ -55,8 +61,11 @@ def _cam_worker():
         return s
 
     stereo, lw, rw = sub(55555), sub(55556), sub(55557)
+    main = sub(MAIN_PORT)
     while True:
         try:
+            if main.poll(0):
+                _frames["main"] = main.recv()
             if stereo.poll(50):
                 buf = stereo.recv()
                 img = cv2.imdecode(np.frombuffer(buf, np.uint8), cv2.IMREAD_COLOR)
@@ -126,20 +135,29 @@ def _stream_joints(side, q_targets, v_rad_s=0.4):
         BRIDGE.q[s] = qb
 
 
-def op_move_ee(side, dx, dy, dz):
+Z_FLOOR = -0.01  # tcp height floor: below this the hand plows the tabletop
+                 # (observed: VLM descents to z -0.02..-0.05 tipped every cup)
+
+
+def op_move_ee(side, dx, dy, dz, speed=0.4):
     q = _arm_q(side)
     if q is None:
         return "error: no rt/lowstate yet"
     p, R = KIN[side].fk(q)
     tgt = p + np.array([dx, dy, dz], dtype=float)
+    clamped = tgt[2] < Z_FLOOR
+    tgt[2] = max(tgt[2], Z_FLOOR)  # never drive the hand through the table
+    v = max(0.03, min(0.4, float(speed)))  # rad/s joint speed
     q_new, ep, er = KIN[side].ik(tgt, R, q, q_rest=_home_q(side))
     if ep > 0.012:
         return (f"error: target ({tgt[0]:+.3f},{tgt[1]:+.3f},{tgt[2]:+.3f}) "
                 f"unreachable (pos err {ep:.3f} m) - move closer / use the lift")
-    _stream_joints(side, list(q_new))
+    _stream_joints(side, list(q_new), v_rad_s=v)
     p2, _ = KIN[side].fk(_arm_q(side) or q_new)
+    note = " [z CLAMPED at the tabletop floor - you were driving into the table, reassess]" if clamped else ""
     return (f"moved {side} tcp -> ({p2[0]:+.3f},{p2[1]:+.3f},{p2[2]:+.3f}) "
-            f"[{FRAME_HELP}]; requested d=({dx:+.3f},{dy:+.3f},{dz:+.3f})")
+            f"[{FRAME_HELP}]; requested d=({dx:+.3f},{dy:+.3f},{dz:+.3f}) "
+            f"at {v:.2f} rad/s{note}")
 
 
 # grippers: own publishers for BOTH sides (Bridge ships right only)
@@ -226,12 +244,16 @@ TOOLS = [
     {"name": "get_state", "description": f"Arm TCP poses + joints ({FRAME_HELP}), lift height.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "move_ee", "description": f"Move one gripper's tool point by a RELATIVE offset "
-                                       f"({FRAME_HELP}). Keeps the current orientation. ~5 cm steps "
-                                       f"work well; errors if unreachable (adjust or use set_lift).",
+                                       f"({FRAME_HELP}). Keeps the current orientation. Errors if "
+                                       f"unreachable (adjust or use set_lift). Optional speed = "
+                                       f"joint speed in rad/s (0.03..0.4, default 0.4): pass "
+                                       f"~0.08 for a slow, careful extension or descent near the "
+                                       f"cups - ONE slow command beats a chain of small steps.",
      "inputSchema": {"type": "object", "required": ["side", "dx", "dy", "dz"],
                      "properties": {"side": {"type": "string", "enum": ["left", "right"]},
                                     "dx": {"type": "number"}, "dy": {"type": "number"},
-                                    "dz": {"type": "number"}}}},
+                                    "dz": {"type": "number"},
+                                    "speed": {"type": "number"}}}},
     {"name": "move_joints", "description": "Absolute 7-joint target (rad, shoulder_pitch..wrist_yaw order).",
      "inputSchema": {"type": "object", "required": ["side", "q"],
                      "properties": {"side": {"type": "string", "enum": ["left", "right"]},
@@ -273,7 +295,8 @@ def call_tool(name, args):
     if name == "get_state":
         return {"content": [{"type": "text", "text": op_state()}]}
     if name == "move_ee":
-        return {"content": [{"type": "text", "text": op_move_ee(args["side"], args["dx"], args["dy"], args["dz"])}]}
+        return {"content": [{"type": "text", "text": op_move_ee(
+            args["side"], args["dx"], args["dy"], args["dz"], args.get("speed", 0.4))}]}
     if name == "move_joints":
         _stream_joints(args["side"], [float(x) for x in args["q"]])
         return {"content": [{"type": "text", "text": op_state()}]}
