@@ -7,10 +7,10 @@ yaw). This module maps each item TYPE to a spawn spec:
 
 * generated primitives  -> RigidObjectCfg (dynamic) or AssetBaseCfg
   (static slabs/racks), sized/masses after the challenge photos
-  (T01 mug+rack, T04 fruits+plates, T13 tubes+rack, ...)
-* USD props             -> the demo's simready (mug, banana) /
-  artvip (basket, toolbox, notebook, stapler) / warehouse-kit
-  (crate) assets, bind-mounted at UNIBOT_ASSETS
+  (T04 fruits+plates, T13 tubes+rack, ...)
+* USD props             -> prepared single-body USDs under UNIBOT_ASSETS
+  (T20's simready kraft paper cup, flattened offline - raw multi-prim/
+  instanced SimReady spawns fail the env prim regex)
 """
 
 import math
@@ -85,18 +85,24 @@ def _mass(m):
     return sim_utils.MassPropertiesCfg(mass=m)
 
 
-def _usd_spawn(path):
-    return sim_utils.UsdFileCfg(usd_path=path, rigid_props=_rigid_body(), collision_props=_col())
+def _usd_spawn(path, scale=None):
+    cfg = dict(usd_path=path, rigid_props=_rigid_body(), collision_props=_col())
+    if scale is not None:
+        cfg["scale"] = tuple(scale)
+    return sim_utils.UsdFileCfg(**cfg)
 
 
 # ---- item registry -----------------------------------------------------
 # type -> (kind, half_z above tabletop, factory(color) -> spawn cfg)
 # kind: "dyn" RigidObjectCfg | "stat" AssetBaseCfg | "statics" multi-part
 REGISTRY = {
-    # generated challenge props (sized after the task photos)
-    "cup": ("dyn", 0.050, lambda c: sim_utils.CylinderCfg(
-        radius=0.035, height=0.10, rigid_props=_rigid_body(), mass_props=_mass(0.05),
-        collision_props=_col(), visual_material=_vis(c or (0.85, 0.2, 0.15), 0.5, 0.35))),
+    # T20 paper cups: the SimReady kraft prop, offline-flattened by the
+    # repo's tools/prepare_paper_cup_usd.py to ONE root rigid body (0.05
+    # kg) + SDF mesh collider (concave cup - stacks nest). Asset origin
+    # sits at the BASE, hence half_z = 0; scale 0.72 -> dia 0.075 m,
+    # height 0.080 m, the challenge photo cup size (Dex1-graspable)
+    "cup": ("dyn", 0.0, lambda c: _usd_spawn(
+        _sr("paper_cup", "paper_cup.usda"), scale=(0.72,) * 3)),
     "apple": ("dyn", 0.040, lambda c: sim_utils.SphereCfg(
         radius=0.040, rigid_props=_rigid_body(), mass_props=_mass(0.10),
         collision_props=_col(), visual_material=_vis(c or (0.85, 0.15, 0.12), 0.3, 0.5))),

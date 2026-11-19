@@ -173,8 +173,7 @@ class Lift:
         while True:
             h = self.state.get("h")
             if self.target is not None and h is not None:
-                p = Point32_()
-                p.z = max(-0.05, min(0.05, 1.5 * (self.target - h)))
+                p = Point32_(x=0.0, y=0.0, z=max(-0.05, min(0.05, 1.5 * (self.target - h))))
                 self.pub.Write(p)
             time.sleep(0.05)
 

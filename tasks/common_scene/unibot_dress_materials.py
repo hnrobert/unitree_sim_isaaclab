@@ -23,9 +23,10 @@ TEXTURE_DIR = os.path.join(
     os.environ.get("UNIBOT_ASSETS", "/workspaces/unibot_demo_assets"), "materials")
 
 # item type -> (png, roughness, metallic); the tint color comes from
-# the layout entry (YAML color or the type default)
+# the layout entry (YAML color or the type default). USD-prop types
+# (e.g. "cup" - SimReady kraft paper cup) ship their own materials
+# and must stay OUT of this map.
 ITEM_TEXTURES = {
-    "cup": ("plastic_blue.png", 0.35, 0.15),
     "mug_g": ("metal.png", 0.35, 0.75),
     "apple": ("apple_red.png", 0.45, 0.05),
     "orange": ("orange.png", 0.45, 0.05),
