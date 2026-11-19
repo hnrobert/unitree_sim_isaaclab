@@ -874,25 +874,14 @@ def main(env_cfg):
                         print("[unibot] base re-anchored to spawn")
                     except Exception as _e3:
                         print(f"[unibot] re-anchor failed: {_e3}")
-                # one-shot: after the forced overview has rendered for
-                # ~10 s, hand the viewport back to its FREE camera -
-                # kit copies the current view into the free camera on
-                # detach, so the user keeps the overview framing AND
-                # regains drag/zoom navigation (looking THROUGH a prim
-                # camera locks navigation = the "fixed" complaint)
-                if loop_count == 200 and not globals().get("_unibot_freed"):
-                    globals()["_unibot_freed"] = True
-                    try:
-                        import omni.kit.viewport.utility as _vp_u2
-                        for _nm2 in ([None] if not hasattr(_vp_u2, "get_viewport_window_names")
-                                     else _vp_u2.get_viewport_window_names()):
-                            _vp2 = (_vp_u2.get_viewport_from_window_name(_nm2)
-                                    if _nm2 else _vp_u2.get_active_viewport())
-                            if _vp2 is not None:
-                                _vp2.camera_path = ""  # "" = free camera
-                        print("[unibot] viewport released to the free camera (drag/zoom live)")
-                    except Exception as _e2:
-                        print(f"[unibot] viewport release skipped: {_e2}")
+                # NOTE there is deliberately NO "release the viewport to
+                # the free camera" step: /World/PerspectiveCamera IS the
+                # free camera in Isaac Sim (drag/zoom edits its xform),
+                # and assigning camera_path = "" does NOT switch to it -
+                # it detaches the viewport into an empty path = frozen
+                # view that ignores all navigation (the "still can't
+                # adjust the main window view" report). The startup
+                # --view_camera world binding stays as-is, draggable.
                 if _unibot_overhead_grab is not None and loop_count % 2 == 0:
                     _unibot_overhead_grab()  # main thread: PhysX-safe
                 if _unibot_viewport_grab is not None and loop_count % 2 == 0:
