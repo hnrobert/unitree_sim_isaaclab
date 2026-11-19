@@ -23,8 +23,19 @@ from tasks.g1d_tasks.pick_place_cylinder_g1d_dex1.pickplace_cylinder_g1d_dex1_jo
 from . import mdp as unibot_mdp
 
 # robot parks at the slot standoff (SLOT_STANDOFF 0.55 south of the
-# slot), facing +y like the reference task
+# slot), facing +y like the reference task.
+# UNIBOT_SPAWN="x,y" (metres) teleports the START pose to any station -
+# e.g. run_T20.sh boots directly at the table_03 paper-cup-stacking
+# station ("T20 纸杯堆叠") with ALL navigation disabled: the robot
+# spawns already parked at the table and never moves the base.
 ROBOT_POS = (-8.5, 0.35, 0.1114)
+try:  # env override wins when set (sim_main passes the environment through)
+    import os as _os
+    _sp = _os.environ.get("UNIBOT_SPAWN", "").split(",")
+    if len(_sp) == 2:
+        ROBOT_POS = (float(_sp[0]), float(_sp[1]), ROBOT_POS[2])
+except Exception:
+    pass
 
 _ROBOT_ENTITIES = (
     "robot", "front_camera", "front_right_camera", "left_wrist_camera", "right_wrist_camera")
