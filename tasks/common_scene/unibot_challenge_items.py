@@ -99,10 +99,12 @@ REGISTRY = {
     # T20 paper cups: the SimReady kraft prop, offline-flattened by the
     # repo's tools/prepare_paper_cup_usd.py to ONE root rigid body (0.05
     # kg) + SDF mesh collider (concave cup - stacks nest). Asset origin
-    # sits at the BASE, hence half_z = 0; scale 0.72 -> dia 0.075 m,
-    # height 0.080 m, the challenge photo cup size (Dex1-graspable)
+    # sits at the BASE, hence half_z = 0; scale 0.504 (= 0.72 x 0.70,
+    # user-requested 70% of the previous size) -> dia 0.052 m,
+    # height 0.056 m (= FLIP_H below: a flipped cup's origin must be
+    # raised by the height, the body then hangs down onto its rim)
     "cup": ("dyn", 0.0, lambda c: _usd_spawn(
-        _sr("paper_cup", "paper_cup.usda"), scale=(0.72,) * 3)),
+        _sr("paper_cup", "paper_cup.usda"), scale=(0.504,) * 3)),
     "apple": ("dyn", 0.040, lambda c: sim_utils.SphereCfg(
         radius=0.040, rigid_props=_rigid_body(), mass_props=_mass(0.10),
         collision_props=_col(), visual_material=_vis(c or (0.85, 0.15, 0.12), 0.3, 0.5))),
@@ -205,6 +207,11 @@ COMPOUNDS = {
 }
 
 
+# flipped (upside-down) base-origin USD props: the spawn z must be
+# raised by the item height - keep in sync with the REGISTRY scales
+FLIP_H = {"cup": 0.111 * 0.504}
+
+
 def _yaw_rot(entry, lying=False):
     yaw = float(entry.get("yaw", 0.0))
     q = _qz(yaw)
@@ -251,6 +258,13 @@ def make_item_cfgs(entry, table_pos):
     kind, half_z, factory = REGISTRY[typ]
     z = TABLE_TOP + GAP + (half_z if half_z > 0 else 0.0) + up
     rot = _yaw_rot(entry, lying=(typ == "pencil"))
+    if entry.get("flip"):
+        # upside-down spawn: 180 deg about the local x after the yaw -
+        # for base-origin USD props (cup) the body then hangs DOWN from
+        # the origin, so raise z by the item's height (rim rests on the
+        # table through the spawn gap, gravity settles it)
+        rot = _qmul(rot, (1.0, 0.0, 0.0, 0.0))
+        z += FLIP_H.get(typ, 0.0)
     cfg = _dyn(factory(color), (wx, wy, z), rot) if kind == "dyn" \
         else _stat(factory(color), (wx, wy, z), rot)
     pick = {"type": typ, "pos": (wx, wy, z), "rot": rot,

@@ -157,6 +157,46 @@ def _tcp_safe(p) -> str | None:
     return None
 
 
+# shoulder-roll adduction cap: the URDF would allow the upper arm to fold
+# ~1.59 rad across the body; past ~0.95 the elbow-in posture drags the
+# upper arm through the torso even with a valid TCP target (self-collision
+# then fights the whole arm). Positive = toward the body centerline.
+SHOULDER_ROLL_INWARD = 0.95
+# TCP cross-body cap: measured live - a right-arm command to y +0.17 was
+# "reachable" in joint space but PhysX self-collision pushed the arm back
+# (actual tcp y +0.01) = the "arm sinks into the body" report. The fold
+# comes from shoulder YAW, so the roll cap alone cannot see it. +0.12
+# still reaches the front-left staging / stacking spots with the RIGHT
+# hand; beyond that the posture physically collapses.
+CROSS_BODY_LIMIT = 0.12
+
+
+def _cross_guard(side, p) -> str | None:
+    """None if the TCP target stays on this arm's side of the body, else why."""
+    over = p[1] - CROSS_BODY_LIMIT if side == "right" else -CROSS_BODY_LIMIT - p[1]
+    if over > 0:
+        other = "LEFT" if side == "right" else "RIGHT"
+        return (f"target y {p[1]:+.2f} crosses {over:.2f} m into the {'left' if side == 'right' else 'right'} "
+                f"half (cap {'+' if side == 'right' else '-'}{CROSS_BODY_LIMIT}) - the upper arm folds into the "
+                f"torso there; use the {other} hand for that spot or bring the target back to this side")
+    return None
+
+
+def _shoulder_guard(side, q) -> str | None:
+    """None if the IK solution keeps the shoulder out of the torso, else why."""
+    try:
+        i = KIN[side].names.index(f"{side}_shoulder_roll_joint")
+    except ValueError:
+        return None
+    roll = float(q[i])
+    inward = roll if side == "right" else -roll
+    if inward > SHOULDER_ROLL_INWARD:
+        return (f"shoulder roll {roll:+.2f} rad folds the upper arm into the torso "
+                f"(inward cap {SHOULDER_ROLL_INWARD:+.2f}) - keep the ELBOW OUT: approach "
+                f"the target from this arm's own side, change the lift, or use the other hand")
+    return None
+
+
 def _rpy_to_R(roll, pitch, yaw):
     """Rotation matrix from torso-frame RPY (Rz(yaw) @ Ry(pitch) @ Rx(roll))."""
     cr, sr = math.cos(roll), math.sin(roll)
@@ -195,6 +235,9 @@ def op_set_ee_pose(side, x, y, z, roll=None, pitch=None, yaw=None, speed=0.5):
     why = _tcp_safe(tgt)
     if why:
         return f"error: target ({tgt[0]:+.2f},{tgt[1]:+.2f},{tgt[2]:+.2f}) rejected - {why}"
+    why = _cross_guard(side, tgt)
+    if why:
+        return f"error: target rejected - {why}"
     r0, p0r, y0 = _R_to_rpy(R0)
     R = _rpy_to_R(r0 if roll is None else float(roll),
                   p0r if pitch is None else float(pitch),
@@ -214,6 +257,9 @@ def op_set_ee_pose(side, x, y, z, roll=None, pitch=None, yaw=None, speed=0.5):
         if ep > 0.012:
             return (f"aborted at waypoint {i}/{n_wp}: unreachable (pos err {ep:.3f} m) "
                     f"- try a closer target or change the lift")
+        why = _shoulder_guard(side, q_i)
+        if why:
+            return f"aborted at waypoint {i}/{n_wp}: {why}; arm left at the last safe pose"
         _stream_joints(side, list(q_i), v_rad_s=max(0.3, min(0.8, float(speed))))
         q_prev = q_i
     p1, _ = KIN[side].fk(q_prev)
@@ -232,11 +278,17 @@ def op_move_ee(side, dx, dy, dz, speed=0.4):
     if why:
         return (f"error: target ({tgt[0]:+.3f},{tgt[1]:+.3f},{tgt[2]:+.3f}) "
                 f"rejected - {why}; the move is NOT executed")
+    why = _cross_guard(side, tgt)
+    if why:
+        return f"error: move rejected - {why}"
     v = max(0.03, min(0.4, float(speed)))  # rad/s joint speed
     q_new, ep, er = KIN[side].ik(tgt, R, q, q_rest=_home_q(side))
     if ep > 0.012:
         return (f"error: target ({tgt[0]:+.3f},{tgt[1]:+.3f},{tgt[2]:+.3f}) "
                 f"unreachable (pos err {ep:.3f} m) - move closer / use the lift")
+    why = _shoulder_guard(side, q_new)
+    if why:
+        return f"error: move rejected - {why}"
     _stream_joints(side, list(q_new), v_rad_s=v)
     p2, _ = KIN[side].fk(_arm_q(side) or q_new)
     return (f"moved {side} tcp -> ({p2[0]:+.3f},{p2[1]:+.3f},{p2[2]:+.3f}) "

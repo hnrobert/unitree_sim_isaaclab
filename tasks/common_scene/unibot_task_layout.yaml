@@ -9,6 +9,7 @@
 #   color 可选,覆盖默认颜色(仅生成形状类有效)
 #   up    可选,额外抬高(米)——叠放时给下层物品让位
 #   yaw   可选,绕 z 旋转(度,仅 USD 道具/组合件)
+#   flip  可选,true = 倒置(口朝下)生成,仅 USD 道具(自动抬高一个物高)
 #
 # table_00..11 = 12 张工作桌(偶数 = 南排 y−1.7,奇数 = 北排 y+1.7,机器人服务 table_01)
 # table_12..15 = 东侧 4 张整理桌(仅布置,无抓取任务)
@@ -47,9 +48,11 @@ tables:
       # at 0.36-0.49 m torso-forward - inside the ~0.35 m tcp comfort
       # zone measured in the driver runs; left/right split for both
       # arms, center-back one doubles as the stacking target
-      - { type: cup, at: [-0.24, -0.28], color: [0.82, 0.66, 0.45] }
-      - { type: cup, at: [0.26, -0.29], color: [0.82, 0.66, 0.45] }
-      - { type: cup, at: [0.00, -0.26], color: [0.82, 0.66, 0.45] }
+      # flip: spawn MOUTH-DOWN (upside down) - the pyramid task then
+      # only needs picking and stacking, no mid-air inversion
+      - { type: cup, at: [-0.24, -0.28], color: [0.82, 0.66, 0.45], flip: true }
+      - { type: cup, at: [0.26, -0.29], color: [0.82, 0.66, 0.45], flip: true }
+      - { type: cup, at: [0.10, -0.26], color: [0.82, 0.66, 0.45], flip: true }
   table_04:
     task: T08 整理书架
     items:
