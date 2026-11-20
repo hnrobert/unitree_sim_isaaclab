@@ -394,8 +394,12 @@ def call_tool(name, args):
             args.get("roll"), args.get("pitch"), args.get("yaw"),
             args.get("speed", 0.5))}]}
     if name == "move_ee":
+        # glm-class models OMIT zero-valued optional fields (dx only, etc.)
+        # - a bare args["dy"] KeyError killed the handler thread, which
+        # dropped the HTTP connection and took the whole driver run down
         return {"content": [{"type": "text", "text": op_move_ee(
-            args["side"], args["dx"], args["dy"], args["dz"], args.get("speed", 0.4))}]}
+            args["side"], float(args.get("dx", 0.0)), float(args.get("dy", 0.0)),
+            float(args.get("dz", 0.0)), args.get("speed", 0.4))}]}
     if name == "move_joints":
         # not in TOOLS (the model plans in gripper-pose space now), but
         # the MCP endpoint also serves the ACT runner, which legitimately
@@ -403,7 +407,7 @@ def call_tool(name, args):
         _stream_joints(args["side"], [float(x) for x in args["q"]])
         return {"content": [{"type": "text", "text": op_state()}]}
     if name == "set_gripper":
-        return {"content": [{"type": "text", "text": GRIP.set(args["side"], args["open"])}]}
+        return {"content": [{"type": "text", "text": GRIP.set(args["side"], args.get("open", 1.0))}]}
     if name == "set_lift":
         return {"content": [{"type": "text", "text": LIFT.set(args.get("height_m"))}]}
     if name == "home":
@@ -439,7 +443,16 @@ class Handler(BaseHTTPRequestHandler):
             body = {"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}}
         elif method == "tools/call":
             p = req.get("params", {})
-            body = {"jsonrpc": "2.0", "id": mid, "result": call_tool(p.get("name"), p.get("arguments") or {})}
+            try:
+                result = call_tool(p.get("name"), p.get("arguments") or {})
+            except Exception as e:  # a tool bug must NEVER kill the handler
+                # thread (the dropped connection takes the driver run down
+                # with it) - answer with an error the model can react to
+                import traceback
+                print(f"[t20] tool {p.get('name')} failed:\n{traceback.format_exc()}", flush=True)
+                result = {"content": [{"type": "text", "text": f"error: {type(e).__name__}: {e}"}],
+                          "isError": True}
+            body = {"jsonrpc": "2.0", "id": mid, "result": result}
         else:
             body = {"jsonrpc": "2.0", "id": mid,
                     "error": {"code": -32601, "message": f"no such method {method}"}}
